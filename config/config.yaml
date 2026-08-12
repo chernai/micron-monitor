@@ -1,0 +1,85 @@
+# Micron Monitor configuration
+# Weights must sum to 100. Editable without touching code.
+
+weights:
+  hbm_demand: 25
+  dram_pricing: 25
+  gross_margins: 25
+  customer_capex: 15
+  valuation: 10
+
+# Primary subject
+subject_ticker: MU
+subject_cik: 723125   # SEC CIK for Micron Technology Inc
+
+# Companies tracked for the Customer Capex component
+capex_universe:
+  MSFT: {cik: 789019,  name: "Microsoft"}
+  AMZN: {cik: 1018724, name: "Amazon"}
+  GOOGL: {cik: 1652044, name: "Alphabet"}
+  META:  {cik: 1326801, name: "Meta Platforms"}
+  ORCL:  {cik: 1341439, name: "Oracle"}
+  NVDA:  {cik: 1045810, name: "Nvidia"}
+  AMD:   {cik: 2488,    name: "AMD"}
+
+# SEC EDGAR requires a descriptive User-Agent identifying the requester.
+sec_user_agent: "MicronMonitor/1.0 (personal research tool; contact: somasocial23@gmail.com)"
+
+# How far back (days) an observation counts as "current evidence" for scoring
+lookback_days:
+  hbm_demand: 120
+  dram_pricing: 90
+  customer_capex: 120
+  news_general: 30
+
+# Minimum number of observations (of any tier) required before a component
+# is scored at all, rather than reported "Insufficient data"
+min_observations:
+  hbm_demand: 2
+  dram_pricing: 2
+  gross_margins: 1
+  customer_capex: 1
+  valuation: 1
+
+# Confidence downgrade rule: if the observations backing a component are
+# dominated (>= this fraction) by NEWS_REPORT/INFERENCE tier rather than
+# FACT/MANAGEMENT_GUIDANCE, cap confidence at MEDIUM (or LOW if none are FACT-tier)
+low_tier_fraction_for_medium_cap: 0.5
+
+# News/RSS search queries per category. Each maps to a Google News RSS query.
+news_queries:
+  hbm_demand:
+    - "Micron HBM"
+    - "HBM3E demand"
+    - "HBM4"
+    - "SK Hynix HBM"
+    - "Samsung HBM"
+    - "Nvidia HBM supply"
+  dram_pricing:
+    - "DRAM contract price"
+    - "DRAM spot price"
+    - "DDR5 price"
+    - "server DRAM pricing"
+    - "TrendForce DRAM"
+  gross_margins:
+    - "Micron gross margin"
+    - "Micron earnings guidance"
+  customer_capex:
+    - "Microsoft AI capex"
+    - "Amazon AWS capex"
+    - "Google data center capex"
+    - "Meta AI infrastructure spending"
+    - "Oracle cloud capex"
+    - "Nvidia data center demand"
+    - "hyperscaler capex guidance"
+
+# Trend-arrow thresholds: change in component score vs prior reading
+trend_thresholds:
+  improving: 3   # score up by >= this many points -> "up"
+  deteriorating: -3
+
+# Overall signal thresholds
+signal_thresholds:
+  buying_opportunity_min_fundamental: 65
+  buying_opportunity_min_price_score: 45
+  risk_reduce_max_fundamental: 45
