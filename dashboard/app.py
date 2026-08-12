@@ -9,6 +9,17 @@ sys.path.insert(0, str(PROJECT_ROOT))
 import streamlit as st
 import plotly.graph_objects as go
 
+# Streamlit Community Cloud's secrets manager populates st.secrets, not
+# os.environ — bridge it here so db/init_db.py's plain os.environ.get(...)
+# works the same way locally (.env), on Streamlit Cloud (st.secrets), and
+# in GitHub Actions (a workflow env var) without three code paths.
+import os
+try:
+    if "DATABASE_URL" in st.secrets:
+        os.environ.setdefault("DATABASE_URL", st.secrets["DATABASE_URL"])
+except Exception:
+    pass  # no secrets.toml configured (e.g. plain local run using .env) — fine
+
 from config.loader import load_config
 from dashboard import data
 from scripts.background_scheduler import start_background_scheduler

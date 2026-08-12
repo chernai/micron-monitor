@@ -2,16 +2,8 @@
 score — it only formats what scoring.engine already wrote to the database.
 """
 import json
-import sqlite3
-from pathlib import Path
 
-DB_PATH = Path(__file__).resolve().parent.parent / "data" / "micron_monitor.db"
-
-
-def get_conn():
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
+from db.init_db import get_conn
 
 
 def latest_overall_score(conn):

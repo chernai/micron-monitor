@@ -3,7 +3,7 @@
 ## Flow
 
 ```
-Collectors (Python, scheduled)          Storage (SQLite)              Dashboard
+Collectors (Python)                     Storage (Postgres/Supabase)   Dashboard
 sec_edgar.py (SEC EDGAR XBRL)  ---raw facts--->  observations   ---reads--->  Streamlit
 market_data.py (yfinance)      ---raw facts--->  metrics (series)             dashboard
 news_feed.py (Google News RSS) ---headlines--->  observations                 (read-only)
@@ -19,6 +19,31 @@ news_feed.py (Google News RSS) ---headlines--->  observations                 (r
 Collectors only ever **append** immutable, sourced observations. The scoring
 engine is a separate deterministic pass reading observations + config
 (weights/thresholds) and writing scores. The dashboard only reads.
+
+**Storage backend**: Postgres, hosted on Supabase's free tier — not local
+SQLite. This was a deliberate pivot (see below) so the app can run on a free
+host (Streamlit Community Cloud) without losing accumulated score history on
+every restart, since Streamlit Cloud gives you neither a durable local disk
+nor a cron scheduler. `db/init_db.py` wraps a psycopg2 connection in a thin
+`PgConnection` class that mimics sqlite3's `conn.execute(...)` convenience
+API (translating `?` placeholders to `%s`, returning dict-like rows via
+`RealDictCursor`), so collectors/scoring/dashboard code — all originally
+written against sqlite3 — didn't need per-call-site rewrites. The only files
+with real Postgres-specific logic are `db/init_db.py` and `db/store.py`
+(which uses `INSERT ... ON CONFLICT DO NOTHING RETURNING id` instead of
+sqlite's `cursor.lastrowid`, since Postgres has no equivalent and duplicate
+inserts are the expected common case as collectors re-scan overlapping
+windows on every run).
+
+**Scheduling**: no single mechanism — pick the one matching your deploy path.
+On the free path (Streamlit Community Cloud), a GitHub Actions cron workflow
+(`.github/workflows/refresh.yml`) runs `scripts/refresh.py` daily against the
+same Supabase database. On the paid always-on path (Render/Railway), an
+in-process background thread (`scripts/background_scheduler.py`, opt-in via
+`MICRON_MONITOR_ENABLE_SCHEDULER=1`) does the same job without needing a
+separate scheduler. Purely local runs can still use `launchd`
+(`scripts/install_schedule.sh`) — all three point at the same database, so
+they're interchangeable, not mutually exclusive.
 
 ## Data sources
 
@@ -66,3 +91,4 @@ See `db/schema.sql`. Tables: `observations` (immutable sourced facts/quotes),
 - DRAM/HBM scoring is a headline-keyword heuristic, not verified analysis — treat as directional evidence, shown transparently in the dashboard's evidence feed.
 - yfinance valuation fields depend on an unofficial Yahoo endpoint that can break; the collector fails soft (skips the field) rather than crashing.
 - No historical backtesting yet (spec section 14) — would need years of point-in-time data this system hasn't accumulated yet; revisit once enough daily history exists.
+- Supabase's free tier pauses a project after a week of no database activity — the daily GitHub Actions refresh should keep it awake, but if you skip both that and local runs for a stretch, the first request after a pause takes longer while it wakes back up.

@@ -28,7 +28,10 @@ def _pct_change(series, days_back):
     end_val = series.iloc[-1]
     if not start_val:
         return None
-    return (end_val / start_val - 1) * 100
+    # pandas/numpy scalars (e.g. numpy.float64) aren't reliably adapted by
+    # psycopg2 the way sqlite3 tolerated them — cast to native float so every
+    # value written downstream is a plain Python type.
+    return float((end_val / start_val - 1) * 100)
 
 
 def collect(conn, cfg):

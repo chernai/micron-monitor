@@ -1,15 +1,19 @@
-# Render Blueprint — one web service, one persistent disk.
-# Deploy: render.com -> New -> Blueprint -> select this repo. Render reads
-# this file automatically.
+# Render Blueprint — optional alternate deploy path. Not the primary
+# recommendation: since persistence now lives in Supabase (not local disk),
+# Streamlit Community Cloud + Supabase + GitHub Actions (see README) is the
+# genuinely free path. Use this instead if you want an always-on host
+# without depending on GitHub Actions for scheduling — Render's free web
+# service tier now works fine here since no persistent disk is needed.
 #
-# Note: persistent disks require a paid instance type (not the Free plan) —
-# see https://render.com/docs/disks. Without a disk, the SQLite DB resets
-# on every redeploy/restart.
+# Deploy: render.com -> New -> Blueprint -> select this repo. Render reads
+# this file automatically. You'll still need to set DATABASE_URL yourself
+# in the Render dashboard (Environment tab) — secrets aren't stored in this
+# file or the repo.
 services:
   - type: web
     name: micron-monitor
     runtime: python
-    plan: starter
+    plan: free
     buildCommand: "pip install -r requirements.txt && python3 db/init_db.py"
     startCommand: "streamlit run dashboard/app.py --server.port $PORT --server.address 0.0.0.0 --server.headless true"
     envVars:
@@ -17,10 +21,5 @@ services:
         value: "1"
       - key: PYTHON_VERSION
         value: "3.11.9"
-    disk:
-      name: micron-monitor-data
-      # Render checks out the repo at /opt/render/project/src for Python
-      # services — confirm this in the Render dashboard for your service
-      # before first deploy, since it can vary by runtime/plan.
-      mountPath: /opt/render/project/src/data
-      sizeGB: 1
+      - key: DATABASE_URL
+        sync: false   # set manually in the Render dashboard — not committed
