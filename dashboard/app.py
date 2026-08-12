@@ -11,6 +11,9 @@ import plotly.graph_objects as go
 
 from config.loader import load_config
 from dashboard import data
+from scripts.background_scheduler import start_background_scheduler
+
+start_background_scheduler()  # no-op unless MICRON_MONITOR_ENABLE_SCHEDULER=1 (set on hosted deploys)
 
 st.set_page_config(page_title="Micron Monitor", layout="wide", page_icon="🧠")
 

@@ -41,7 +41,7 @@ streamlit run dashboard/app.py
 Opens at http://localhost:8501. There's also a "Run full refresh now" button
 in the sidebar so you don't need the terminal for routine use.
 
-## Daily automated refresh (optional)
+## Daily automated refresh (local, optional)
 
 ```bash
 bash scripts/install_schedule.sh   # writes a launchd job (does not activate it)
@@ -49,6 +49,36 @@ launchctl load ~/Library/LaunchAgents/com.micronmonitor.refresh.plist   # activa
 ```
 
 To undo: `launchctl unload ~/Library/LaunchAgents/com.micronmonitor.refresh.plist`
+
+## Deploying (Render / Railway)
+
+This is a single always-on web service, not a serverless app — Streamlit
+needs a persistent process, and the SQLite database needs a persistent disk.
+Don't use Vercel or Streamlit Community Cloud for this: neither gives you
+both a long-running process *and* durable local disk storage, which this app
+needs for its daily score history to actually accumulate.
+
+**Render** (`render.yaml` is already set up as a Blueprint):
+
+1. Push this repo to GitHub (already done if you're reading this from the repo).
+2. On render.com: New -> Blueprint -> select this repo. Render reads `render.yaml` automatically.
+3. It provisions one web service on a paid plan (persistent disks require a
+   paid instance — see [Render's disk docs](https://render.com/docs/disks))
+   with a 1GB disk mounted at `data/`, running `streamlit run dashboard/app.py`.
+4. `MICRON_MONITOR_ENABLE_SCHEDULER=1` is set automatically in `render.yaml` —
+   this turns on `scripts/background_scheduler.py`, which runs the full
+   refresh once a day *inside the same process*, no separate cron job needed.
+   (It's off by default locally so a plain `streamlit run` doesn't silently
+   start a background job — see that file for the on/off switch.)
+
+**Railway**: same idea, no separate config file needed — create a new
+service from this repo, add a volume mounted at `data/`, set the start
+command to the same `streamlit run ...` line from `render.yaml`, and add the
+`MICRON_MONITOR_ENABLE_SCHEDULER=1` env var.
+
+Either way, the first deploy starts with an empty database — click "Run full
+refresh now" in the sidebar once to populate it (~90s), then the daily
+background job keeps it current.
 
 ## Configuration
 
@@ -76,6 +106,8 @@ scoring/      rubric.py (point bands/keywords), engine.py (scores), alerts.py
 dashboard/    app.py (Streamlit), data.py (read-only queries)
 db/           schema.sql, init_db.py, store.py
 config/       config.yaml (weights/thresholds/queries), loader.py
-scripts/      refresh.py (run everything), install_schedule.sh (launchd)
+scripts/      refresh.py (run everything), install_schedule.sh (launchd, local),
+              background_scheduler.py (in-process daily job, for hosted deploys)
 data/         micron_monitor.db (SQLite, git-ignored)
+render.yaml   Render Blueprint (web service + persistent disk)
 ```

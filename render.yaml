@@ -1,0 +1,26 @@
+# Render Blueprint — one web service, one persistent disk.
+# Deploy: render.com -> New -> Blueprint -> select this repo. Render reads
+# this file automatically.
+#
+# Note: persistent disks require a paid instance type (not the Free plan) —
+# see https://render.com/docs/disks. Without a disk, the SQLite DB resets
+# on every redeploy/restart.
+services:
+  - type: web
+    name: micron-monitor
+    runtime: python
+    plan: starter
+    buildCommand: "pip install -r requirements.txt && python3 db/init_db.py"
+    startCommand: "streamlit run dashboard/app.py --server.port $PORT --server.address 0.0.0.0 --server.headless true"
+    envVars:
+      - key: MICRON_MONITOR_ENABLE_SCHEDULER
+        value: "1"
+      - key: PYTHON_VERSION
+        value: "3.11.9"
+    disk:
+      name: micron-monitor-data
+      # Render checks out the repo at /opt/render/project/src for Python
+      # services — confirm this in the Render dashboard for your service
+      # before first deploy, since it can vary by runtime/plan.
+      mountPath: /opt/render/project/src/data
+      sizeGB: 1
