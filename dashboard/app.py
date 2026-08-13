@@ -130,6 +130,25 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+# ---------- IS TODAY BETTER THAN N DAYS AGO? ----------
+score_hist_for_deltas = data.overall_score_history(conn)
+days_collected = len({h["as_of_date"] for h in score_hist_for_deltas})
+st.caption(f"Fundamental score vs recent history ({days_collected} day(s) of history collected so far):")
+delta_cols = st.columns(3)
+for col, (label, n_days) in zip(delta_cols, [("1 day ago", 1), ("7 days ago", 7), ("30 days ago", 30)]):
+    result = data.score_delta_vs(score_hist_for_deltas, n_days)
+    with col:
+        if result is None:
+            st.metric(label, "Insufficient history")
+        else:
+            st.metric(
+                label,
+                f"{result['latest_score']:.0f}/100",
+                f"{result['delta']:+.0f} vs {result['reference_score']:.0f} on {result['reference_date']}",
+            )
+
+st.divider()
+
 # ---------- FOUR FUNDAMENTALS (+ valuation) ----------
 st.subheader("Components")
 cols = st.columns(5)

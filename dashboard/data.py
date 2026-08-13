@@ -2,6 +2,7 @@
 score — it only formats what scoring.engine already wrote to the database.
 """
 import json
+from datetime import date, timedelta
 
 from db.init_db import get_conn
 
@@ -17,6 +18,39 @@ def overall_score_history(conn, limit=180):
         "FROM overall_scores ORDER BY as_of_date ASC LIMIT ?", (limit,)
     ).fetchall()
     return [dict(r) for r in rows]
+
+
+def score_delta_vs(history, days_ago, tolerance_days=2):
+    """Compare the latest fundamental_score in `history` (as returned by
+    overall_score_history, ascending by date) against the reading closest to
+    `days_ago` days before it. Returns None if there's no reading within
+    `tolerance_days` of that target — i.e. not enough history yet, rather
+    than guessing from whatever's available regardless of how stale it is.
+    """
+    if len(history) < 2:
+        return None
+    latest = history[-1]
+    if latest["fundamental_score"] is None:
+        return None
+    latest_date = date.fromisoformat(latest["as_of_date"])
+    target_date = latest_date - timedelta(days=days_ago)
+
+    best, best_diff = None, None
+    for h in history[:-1]:
+        if h["fundamental_score"] is None:
+            continue
+        d = date.fromisoformat(h["as_of_date"])
+        diff = abs((d - target_date).days)
+        if diff <= tolerance_days and (best_diff is None or diff < best_diff):
+            best, best_diff = h, diff
+    if best is None:
+        return None
+    return {
+        "delta": latest["fundamental_score"] - best["fundamental_score"],
+        "reference_date": best["as_of_date"],
+        "reference_score": best["fundamental_score"],
+        "latest_score": latest["fundamental_score"],
+    }
 
 
 def latest_component_scores(conn):
