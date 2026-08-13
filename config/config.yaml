@@ -83,3 +83,26 @@ signal_thresholds:
   buying_opportunity_min_fundamental: 65
   buying_opportunity_min_price_score: 45
   risk_reduce_max_fundamental: 45
+
+# Peer comparison (context only -- these do NOT get their own BUYING/RISK
+# signal; SEC EDGAR has no usable structured financials for either, so the
+# fundamental-score machinery built for MU can't responsibly extend to them.
+# yfinance's own fundamentals fields are the fallback, sourced from their
+# Korean exchange filings -- real, but lower-confidence and shallower
+# history than MU's SEC-filed data. See ARCHITECTURE.md.)
+peers:
+  SKHY:  {name: "SK Hynix (ADR)"}
+  SSNLF: {name: "Samsung Electronics (OTC)"}
+
+# Price-action / technicals (Micron only). Deliberately kept out of the
+# fundamental score -- this is short-term trading context, not a fundamental
+# signal, consistent with "not a price predictor."
+technicals:
+  volume_avg_short_days: 10
+  volume_avg_long_days: 50
+  volume_regime_above_pct: 1.10   # short avg >= 110% of long avg -> "above average"
+  volume_regime_below_pct: 0.90   # short avg <= 90% of long avg -> "below average"
+  volume_balance_window_days: 22  # ~1 trading month
+  swing_point_k: 5                # a day is a swing point if it's the extreme within +/- k trading days
+  near_term_window_days: 30
+  major_window_days: 180

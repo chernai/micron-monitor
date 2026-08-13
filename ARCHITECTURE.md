@@ -64,6 +64,43 @@ they're interchangeable, not mutually exclusive.
 - **Hyperscaler AI Capex Trend**: derived from real capex FACTs + a small news-based guidance-language nudge.
 - **HBM Demand & DRAM Pricing**: INFERENCE — a keyword rubric over news/guidance text within a lookback window, weighted by source tier. Lowest-confidence part of the system by design; upgradeable if a paid pricing feed is added.
 
+## Peer comparison (SK Hynix, Samsung) — context, not a signal
+
+Added after checking: SK Hynix recently listed NASDAQ ADRs (`SKHY`) but
+files only bare 6-Ks as a foreign private issuer, with no structured XBRL
+financials (verified live against `data.sec.gov` — its companyfacts feed
+has just 5 registration-fee tags, nothing financial). Samsung (`SSNLF`,
+OTC) isn't SEC-registered at all. Neither can support the SEC-EDGAR-based
+scoring built for MU, so `collectors/peer_data.py` falls back to
+yfinance's own fundamentals fields (gross margin, forward P/E, revenue
+growth) — real data, ultimately sourced from their Korean exchange
+filings, but lower-confidence (no citable accession number) and shallower
+history (a handful of quarters via `quarterly_income_stmt`, not point-in-time
+correct) than MU's SEC data. Deliberately shown as a comparison table only
+— no BUYING/RISK signal is computed for either, consistent with "reliable
+data over more features."
+
+## Price action / technicals (MU only) — informational, not a signal
+
+`scoring/technicals.py` computes, live at render time from already-stored
+price/volume data (nothing persisted, nothing backfillable further back
+than the ~1y of price history collected):
+- **Volume regime**: short-window vs long-window average volume (config:
+  `technicals.volume_avg_short_days`/`long_days`).
+- **Volume balance**: sum of `volume x %price-change` over a trailing
+  window, normalized by total volume — negative means down days moved
+  more, on more volume, than up days recovered (net distribution), not
+  just a plain up-volume-vs-down-volume split.
+- **Support/resistance**: swing-point detection (a day is a swing high/low
+  if it's the extreme within +/-k trading days of itself) at two
+  horizons — near-term and major/structural — plus the macro floor (lowest
+  close in the full available window). Deliberately not hand-drawn
+  trendlines or Fibonacci levels — reproducible from the same price series
+  every time.
+
+This is short-term trading context, not fundamentals — it never feeds the
+BUYING/RISK signal, consistent with "not a price predictor."
+
 ## Missing data & confidence
 
 No interpolation, no invented numbers. A component with too few/stale

@@ -113,6 +113,29 @@ def collect(conn, cfg):
             hist_count += 1
         print(f"[market_data] backfilled {hist_count} historical daily closes")
 
+        # Daily volume history — needed for the price-action/technicals
+        # module (volume regime, 22-day volume balance). Same treatment as
+        # price: store the whole fetched year, not just today.
+        volume = hist["Volume"]
+        vol_count = 0
+        for ts, vol_val in volume.items():
+            day = ts.date().isoformat()
+            if not vol_val or vol_val != vol_val:  # NaN/zero guard
+                continue
+            dedup_key = make_dedup_key("yfinance-volume", ticker, "volume_shares", day)
+            obs_id = insert_observation(
+                conn, category="price",
+                source_name="Yahoo Finance (chart API via yfinance)",
+                source_type="FACT", confidence="MEDIUM", obs_date=day,
+                dedup_key=dedup_key, metric_key="volume_shares", company=ticker,
+                value=float(vol_val), unit="shares",
+                source_url=f"https://finance.yahoo.com/quote/{ticker}",
+            )
+            upsert_metric(conn, "volume_shares", ticker, day, float(vol_val),
+                           source_observation_id=obs_id)
+            vol_count += 1
+        print(f"[market_data] backfilled {vol_count} historical daily volumes")
+
     # Valuation fields from .info (fragile — Yahoo's authenticated endpoint)
     try:
         info = t.info

@@ -89,6 +89,14 @@ def price_history(conn, company, limit=3650):
     return [dict(r) for r in rows]
 
 
+def metric_series(conn, metric_key, company, limit=8):
+    rows = conn.execute(
+        "SELECT period_end, value FROM metrics WHERE metric_key=? AND company=? "
+        "ORDER BY period_end DESC LIMIT ?", (metric_key, company, limit),
+    ).fetchall()
+    return [dict(r) for r in reversed(rows)]  # ascending
+
+
 def recent_alerts(conn, limit=25):
     rows = conn.execute(
         "SELECT * FROM alerts ORDER BY triggered_at DESC LIMIT ?", (limit,)

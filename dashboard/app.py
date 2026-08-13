@@ -21,8 +21,11 @@ try:
 except Exception:
     pass  # no secrets.toml configured (e.g. plain local run using .env) — fine
 
+import pandas as pd
+
 from config.loader import load_config
 from dashboard import data
+from scoring import technicals
 from scripts.background_scheduler import start_background_scheduler
 
 start_background_scheduler()  # no-op unless MICRON_MONITOR_ENABLE_SCHEDULER=1 (set on hosted deploys)
@@ -220,6 +223,114 @@ for i, comp_key in enumerate(["hbm_demand", "dram_pricing", "gross_margins", "cu
             st.metric(COMPONENT_LABELS[comp_key],
                       f"{badge(c['score'])} {c['score']:.0f}/100",
                       f"{TREND_ARROW.get(c['trend'], '•')} {c['confidence']}")
+
+st.divider()
+
+# ---------- PEER COMPARISON (context only, no signal) ----------
+st.subheader("🌏 Peer Comparison")
+st.caption("Context, not a signal — SK Hynix and Samsung have no usable SEC-filed financials (SK Hynix "
+           "files bare 6-Ks as a foreign private issuer with no structured XBRL; Samsung isn't SEC-registered "
+           "at all), so unlike MU these numbers come from Yahoo Finance's own fundamentals data rather than "
+           "a citable filing — real, but lower-confidence and shallower history.")
+
+peer_rows = []
+for pticker, pname in [(ticker, "Micron (MU)")] + [(t, i["name"]) for t, i in cfg.get("peers", {}).items()]:
+    gm_series = data.metric_series(conn, "gross_margin_pct", pticker, limit=2)
+    gm = gm_series[-1] if gm_series else None
+    gm_delta = (gm_series[-1]["value"] - gm_series[-2]["value"]) if len(gm_series) == 2 else None
+    fpe = data.latest_metric(conn, "forward_pe", pticker)
+    price_p = data.latest_metric(conn, "price_usd", pticker)
+    peer_rows.append({
+        "Company": pname,
+        "Price": f"${price_p['value']:.2f}" if price_p else "—",
+        "Gross Margin (latest qtr)": f"{gm['value']:.1f}%" if gm else "—",
+        "Qtr-over-Qtr": f"{gm_delta:+.1f}pp" if gm_delta is not None else "—",
+        "Forward P/E": f"{fpe['value']:.1f}x" if fpe else "—",
+    })
+st.dataframe(pd.DataFrame(peer_rows), use_container_width=True, hide_index=True)
+
+st.divider()
+
+# ---------- PRICE ACTION (technicals — MU only, informational, not a signal) ----------
+st.subheader("📊 Price Action")
+st.caption("Short-term trading context for MU — deliberately separate from the fundamental score above. "
+            "This describes current market positioning, not the investment thesis.")
+
+tech = technicals.compute_all(cfg, conn, ticker)
+pv_series = technicals.get_price_volume_series(conn, ticker)
+
+tcol1, tcol2 = st.columns(2)
+vr = tech["volume_regime"]
+with tcol1:
+    if vr["insufficient_data"]:
+        st.metric("Volume Regime", "Insufficient data")
+    else:
+        label = {"ABOVE_AVERAGE": "🟢 Above average", "BELOW_AVERAGE": "🔴 Below average",
+                  "IN_LINE": "🟡 In line", "UNKNOWN": "—"}[vr["regime"]]
+        st.metric(f"Volume Regime ({vr['short_days']}d vs {vr['long_days']}d avg)", label,
+                  f"{vr['ratio'] * 100:.0f}% of longer average")
+    if not vr["insufficient_data"]:
+        st.caption(vr["rationale"])
+
+vb = tech["volume_balance"]
+with tcol2:
+    if vb["insufficient_data"]:
+        st.metric("Volume Balance", "Insufficient data")
+    else:
+        label = {"NET_DISTRIBUTION": "🔴 Net distribution", "NET_ACCUMULATION": "🟢 Net accumulation",
+                  "BALANCED": "🟡 Balanced", "UNKNOWN": "—"}[vb["direction"]]
+        st.metric(f"{vb['window_days']}-Day Volume Balance", label, f"{vb['balance_pct']:+.2f}%")
+    if not vb["insufficient_data"]:
+        st.caption(vb["rationale"])
+
+sr = tech["support_resistance"]
+if sr["insufficient_data"]:
+    st.info(sr["rationale"])
+else:
+    scol1, scol2, scol3, scol4, scol5 = st.columns(5)
+    for col, label, point in [
+        (scol1, "Macro Floor", sr["macro_floor"]),
+        (scol2, "Structural Support", sr["structural_support"]),
+        (scol3, "Near-Term Support", sr["near_term_support"]),
+        (scol4, "Near-Term Resistance", sr["near_term_resistance"]),
+        (scol5, "Major Resistance", sr["major_resistance"]),
+    ]:
+        with col:
+            if point:
+                st.metric(label, f"${point['price']:.2f}", point["date"])
+            else:
+                st.metric(label, "—")
+    st.caption(sr["rationale"])
+
+    if len(pv_series) >= 2:
+        px_fig = make_subplots(rows=2, cols=1, shared_xaxes=True, row_heights=[0.7, 0.3], vertical_spacing=0.03)
+        dates = [s[0] for s in pv_series]
+        closes = [s[1] for s in pv_series]
+        volumes = [s[2] for s in pv_series]
+        px_fig.add_trace(go.Scatter(x=dates, y=closes, mode="lines", name="MU Price",
+                                     line=dict(color=LINE_ORANGE, width=2)), row=1, col=1)
+        px_fig.add_trace(go.Bar(x=dates, y=volumes, name="Volume", marker_color=LINE_BLUE, opacity=0.5),
+                          row=2, col=1)
+
+        level_style = [
+            ("macro_floor", "Macro floor", "#6b7280"),
+            ("structural_support", "Structural support", "#16a34a"),
+            ("near_term_support", "Near-term support", "#86efac"),
+            ("near_term_resistance", "Near-term resistance", "#fca5a5"),
+            ("major_resistance", "Major resistance", "#dc2626"),
+        ]
+        for key, label, color in level_style:
+            point = sr[key]
+            if point:
+                px_fig.add_hline(y=point["price"], line_dash="dot", line_color=color,
+                                  annotation_text=f"{label} (${point['price']:.0f})",
+                                  annotation_position="right", annotation_xanchor="left",
+                                  row=1, col=1)
+
+        px_fig.update_layout(height=550, margin=dict(t=20, b=10, l=10, r=190), showlegend=False)
+        px_fig.update_yaxes(title_text="Price (USD)", row=1, col=1)
+        px_fig.update_yaxes(title_text="Volume", row=2, col=1)
+        st.plotly_chart(px_fig, use_container_width=True)
 
 st.divider()
 

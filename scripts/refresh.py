@@ -5,7 +5,7 @@ Usage: python -m scripts.refresh
 import time
 
 from db.init_db import init_db
-from collectors import sec_edgar, market_data, news_feed
+from collectors import sec_edgar, market_data, news_feed, peer_data
 from scoring import engine, alerts
 
 
@@ -19,6 +19,9 @@ def main():
 
     print("\n--- Market data (price/valuation) ---")
     market_data.run()
+
+    print("\n--- Peer data (SK Hynix, Samsung) ---")
+    peer_data.run()
 
     print("\n--- News feed ---")
     news_feed.run()
