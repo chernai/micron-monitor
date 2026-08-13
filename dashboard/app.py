@@ -8,6 +8,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 import streamlit as st
 import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 
 # Streamlit Community Cloud's secrets manager populates st.secrets, not
 # os.environ — bridge it here so db/init_db.py's plain os.environ.get(...)
@@ -114,6 +115,64 @@ c4.metric("As of", overall["as_of_date"])
 
 st.divider()
 
+# ---------- FEATURED CHART: price vs. fundamentals ----------
+# This is the single most important visual in the app — everything below
+# supports it. Fundamental score as bars (0-100, left axis) against MU's
+# actual price as a continuous line (USD, right axis), with the same
+# buying-opportunity / risk-reduce thresholds used for the signal itself
+# drawn as reference lines. Deliberately dual-axis: the signal thresholds
+# are only meaningful in absolute score units, and price only means
+# anything to a viewer in actual dollars, so indexing either series away
+# would remove the numbers that make this chart useful.
+st.subheader("📈 Price vs. Fundamentals")
+fscore_hist = data.overall_score_history(conn)
+price_hist = data.price_history(conn, ticker)
+
+if len(fscore_hist) < 2 or len(price_hist) < 2:
+    st.info("Needs at least two days of history for both price and fundamental score. "
+            "Builds up as daily refreshes accumulate (or run a historical backfill — "
+            "see scripts/backfill_history.py).")
+else:
+    score_dates = [h["as_of_date"] for h in fscore_hist if h["fundamental_score"] is not None]
+    score_values = [h["fundamental_score"] for h in fscore_hist if h["fundamental_score"] is not None]
+    price_dates = [p["obs_date"] for p in price_hist]
+    price_values = [p["value"] for p in price_hist]
+
+    fig = make_subplots(specs=[[{"secondary_y": True}]])
+    fig.add_trace(
+        go.Bar(x=score_dates, y=score_values, name="Fundamental Score",
+               marker_color=LINE_BLUE, opacity=0.55),
+        secondary_y=False,
+    )
+    fig.add_trace(
+        go.Scatter(x=price_dates, y=price_values, name="MU Price", mode="lines",
+                   line=dict(color=LINE_ORANGE, width=2)),
+        secondary_y=True,
+    )
+    buy_floor = cfg["signal_thresholds"]["buying_opportunity_min_fundamental"]
+    risk_ceiling = cfg["signal_thresholds"]["risk_reduce_max_fundamental"]
+    fig.add_hline(y=buy_floor, line_dash="dash", line_color="#16a34a",
+                  annotation_text=f"Buying-opportunity floor ({buy_floor})",
+                  annotation_position="top left", secondary_y=False)
+    fig.add_hline(y=risk_ceiling, line_dash="dash", line_color="#dc2626",
+                  annotation_text=f"Risk/reduce ceiling ({risk_ceiling})",
+                  annotation_position="bottom left", secondary_y=False)
+
+    fig.update_yaxes(title_text="Fundamental Score (0-100)", range=[0, 100], secondary_y=False)
+    fig.update_yaxes(title_text="MU Price (USD)", secondary_y=True)
+    fig.update_layout(
+        height=500, margin=dict(t=40, b=10, l=10, r=10),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02),
+        barmode="overlay",
+    )
+    st.plotly_chart(fig, use_container_width=True)
+    st.caption("Bars = fundamental score (HBM demand + DRAM pricing + gross margins + customer capex, "
+               "left axis). Line = MU price (right axis). Dashed lines = the same thresholds that drive "
+               "the signal below — this is where you can see price pulling away from (or catching up to) "
+               "the fundamentals.")
+
+st.divider()
+
 # ---------- MAIN SIGNAL ----------
 emoji, label, color = SIGNAL_STYLE.get(overall["signal"], ("⚪", "UNKNOWN", "#6b7280"))
 st.markdown(
@@ -191,57 +250,6 @@ with st.expander("Component rationale (evidence-based, not a black box)"):
 
 st.divider()
 
-# ---------- CHARTS ----------
-chart_col1, chart_col2 = st.columns(2)
-
-with chart_col1:
-    st.subheader("Fundamental score over time")
-    hist = data.overall_score_history(conn)
-    if len(hist) < 2:
-        st.info("Only one reading so far. This chart builds up as daily refreshes accumulate history.")
-    else:
-        fig = go.Figure()
-        fig.add_trace(go.Scatter(
-            x=[h["as_of_date"] for h in hist], y=[h["fundamental_score"] for h in hist],
-            mode="lines", name="Fundamental Score", line=dict(color=LINE_BLUE, width=2),
-        ))
-        fig.add_hline(y=cfg["signal_thresholds"]["buying_opportunity_min_fundamental"],
-                       line_dash="dash", line_color="#9ca3af", annotation_text="Buying-opportunity floor")
-        fig.add_hline(y=cfg["signal_thresholds"]["risk_reduce_max_fundamental"],
-                       line_dash="dash", line_color="#9ca3af", annotation_text="Risk/reduce ceiling")
-        fig.update_yaxes(range=[0, 100], title="Score")
-        fig.update_layout(height=350, margin=dict(t=10, b=10, l=10, r=10))
-        st.plotly_chart(fig, use_container_width=True)
-
-with chart_col2:
-    st.subheader("Price vs. fundamentals (indexed to 100)")
-    price_hist = data.price_history(conn, ticker)
-    fscore_hist = data.overall_score_history(conn)
-    if len(price_hist) < 2 or len(fscore_hist) < 2:
-        st.info("Needs at least two days of history for both price and fundamental score. "
-                "Builds up as daily refreshes accumulate.")
-    else:
-        p0 = price_hist[0]["value"]
-        f0 = fscore_hist[0]["fundamental_score"] or 1
-        fig = go.Figure()
-        fig.add_trace(go.Scatter(
-            x=[p["obs_date"] for p in price_hist], y=[p["value"] / p0 * 100 for p in price_hist],
-            mode="lines", name="MU Price (indexed)", line=dict(color=LINE_ORANGE, width=2),
-        ))
-        fig.add_trace(go.Scatter(
-            x=[h["as_of_date"] for h in fscore_hist],
-            y=[(h["fundamental_score"] / f0 * 100) if h["fundamental_score"] else None for h in fscore_hist],
-            mode="lines", name="Fundamental Score (indexed)", line=dict(color=LINE_BLUE, width=2),
-        ))
-        fig.update_layout(height=350, margin=dict(t=10, b=10, l=10, r=10),
-                           legend=dict(orientation="h", yanchor="bottom", y=1.02))
-        fig.update_yaxes(title="Indexed to 100 at start of window")
-        st.plotly_chart(fig, use_container_width=True)
-        st.caption("Both series rebased to 100 at the first available date — this is a single shared axis, "
-                   "not a dual-axis chart, so divergence between price and fundamentals is directly readable.")
-
-st.divider()
-
 # ---------- ALERTS ----------
 st.subheader("Alerts")
 alerts = data.recent_alerts(conn, limit=15)
@@ -255,24 +263,24 @@ else:
 st.divider()
 
 # ---------- NEWS / EVIDENCE FEED ----------
-st.subheader("News & evidence feed")
-tabs = st.tabs([COMPONENT_LABELS[c] for c in ["hbm_demand", "dram_pricing", "gross_margins", "customer_capex"]])
-for tab, comp_key in zip(tabs, ["hbm_demand", "dram_pricing", "gross_margins", "customer_capex"]):
-    with tab:
-        items = data.recent_observations(conn, comp_key, limit=12)
-        if not items:
-            st.caption("No items collected yet.")
-        for it in items:
-            tier = TIER_LABEL.get(it["source_type"], it["source_type"])
-            conf = it["confidence"]
-            title = it["text_excerpt"] or f"{it.get('metric_key','')}: {it.get('value','')}"
-            link = it["source_url"]
-            line = f"`{tier}` `{conf}` **{it['obs_date']}** — "
-            if link:
-                line += f"[{title}]({link})"
-            else:
-                line += title
-            line += f"  \n<sub>{it['source_name']}</sub>"
-            st.markdown(line, unsafe_allow_html=True)
+with st.expander("📰 News & evidence feed"):
+    tabs = st.tabs([COMPONENT_LABELS[c] for c in ["hbm_demand", "dram_pricing", "gross_margins", "customer_capex"]])
+    for tab, comp_key in zip(tabs, ["hbm_demand", "dram_pricing", "gross_margins", "customer_capex"]):
+        with tab:
+            items = data.recent_observations(conn, comp_key, limit=12)
+            if not items:
+                st.caption("No items collected yet.")
+            for it in items:
+                tier = TIER_LABEL.get(it["source_type"], it["source_type"])
+                conf = it["confidence"]
+                title = it["text_excerpt"] or f"{it.get('metric_key','')}: {it.get('value','')}"
+                link = it["source_url"]
+                line = f"`{tier}` `{conf}` **{it['obs_date']}** — "
+                if link:
+                    line += f"[{title}]({link})"
+                else:
+                    line += title
+                line += f"  \n<sub>{it['source_name']}</sub>"
+                st.markdown(line, unsafe_allow_html=True)
 
 conn.close()

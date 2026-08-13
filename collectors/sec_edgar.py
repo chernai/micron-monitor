@@ -99,7 +99,8 @@ def _filing_url(cik, accn):
 
 
 def collect_company(conn, cfg, ticker, cik):
-    raw = {}  # metric_key -> {period_end: (value, obs_row)}
+    raw = {}  # metric_key -> {period_end: value}
+    raw_filed = {}  # metric_key -> {period_end: filed_date} -- when each value became publicly known
     for metric_key, tags in TAG_CANDIDATES.items():
         instant = metric_key in INSTANT_METRICS
         # Companies sometimes switch XBRL tags over time (e.g. "Revenues" ->
@@ -129,6 +130,7 @@ def collect_company(conn, cfg, ticker, cik):
         if not quarterly and not annual:
             continue
         series = {}
+        filed_dates = {}
         entries = quarterly if not instant else quarterly
         for e in entries:
             period_end = e["end"]
@@ -148,7 +150,9 @@ def collect_company(conn, cfg, ticker, cik):
                            period_label=f"{e.get('fy')} {e.get('fp')}",
                            source_observation_id=obs_id)
             series[period_end] = value
+            filed_dates[period_end] = obs_date
         raw[metric_key] = series
+        raw_filed[metric_key] = filed_dates
 
         # Also derive Q4 for annual filers: FY total - sum(Q1..Q3) of same fiscal year
         if annual:
@@ -164,11 +168,12 @@ def collect_company(conn, cfg, ticker, cik):
                 if len(candidates) == 3:
                     q_sum = sum(c["val"] for c in candidates)
                     q4_val = fy_val - q_sum
+                    q4_filed = a.get("filed", fy_end)
                     dedup_key = make_dedup_key("sec-derived-q4", ticker, metric_key, fy_end)
                     obs_id = insert_observation(
                         conn, category="gross_margins" if ticker == cfg["subject_ticker"] else "customer_capex",
                         source_name=f"Derived: FY10-K total minus Q1-Q3 ({a.get('accn')})",
-                        source_type="FACT", confidence="HIGH", obs_date=a.get("filed", fy_end),
+                        source_type="FACT", confidence="HIGH", obs_date=q4_filed,
                         dedup_key=dedup_key, metric_key=metric_key, company=ticker,
                         value=q4_val, unit="USD" if metric_key != "eps_diluted_usd" else "USD_per_share",
                         period_end=fy_end,
@@ -180,19 +185,24 @@ def collect_company(conn, cfg, ticker, cik):
                                   derived_from="FY - (Q1+Q2+Q3)",
                                   source_observation_id=obs_id)
                     raw[metric_key][fy_end] = q4_val
+                    raw_filed[metric_key][fy_end] = q4_filed
 
-    # Derived ratios for the subject company (gross margin %)
+    # Derived ratios for the subject company (gross margin %). obs_date is
+    # the later of the two inputs' actual filing dates -- NOT today's date
+    # -- so a point-in-time-correct historical backfill can't "see" this
+    # ratio before it was actually derivable from public filings.
     if ticker == cfg["subject_ticker"] and "revenue_usd" in raw:
         rev = raw["revenue_usd"]
         gp = raw.get("gross_profit_usd", {})
         for period_end, revenue_val in rev.items():
             if period_end in gp and revenue_val:
                 margin = gp[period_end] / revenue_val * 100
+                filed = max(raw_filed["revenue_usd"][period_end], raw_filed["gross_profit_usd"][period_end])
                 dedup_key = make_dedup_key("derived", ticker, "gross_margin_pct", period_end)
                 obs_id = insert_observation(
                     conn, category="gross_margins",
                     source_name="Derived: GrossProfit / Revenue (SEC EDGAR)",
-                    source_type="FACT", confidence="HIGH", obs_date=date.today().isoformat(),
+                    source_type="FACT", confidence="HIGH", obs_date=filed,
                     dedup_key=dedup_key, metric_key="gross_margin_pct", company=ticker,
                     value=round(margin, 2), unit="pct", period_end=period_end,
                 )
@@ -204,11 +214,12 @@ def collect_company(conn, cfg, ticker, cik):
         for period_end, ocf_val in ocf.items():
             if period_end in capex:
                 fcf = ocf_val - capex[period_end]
+                filed = max(raw_filed["ocf_usd"][period_end], raw_filed["capex_usd"][period_end])
                 dedup_key = make_dedup_key("derived", ticker, "fcf_usd", period_end)
                 obs_id = insert_observation(
                     conn, category="gross_margins",
                     source_name="Derived: Operating Cash Flow - Capex (SEC EDGAR)",
-                    source_type="FACT", confidence="HIGH", obs_date=date.today().isoformat(),
+                    source_type="FACT", confidence="HIGH", obs_date=filed,
                     dedup_key=dedup_key, metric_key="fcf_usd", company=ticker,
                     value=fcf, unit="USD", period_end=period_end,
                 )

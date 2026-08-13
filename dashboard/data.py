@@ -12,7 +12,7 @@ def latest_overall_score(conn):
     return dict(row) if row else None
 
 
-def overall_score_history(conn, limit=180):
+def overall_score_history(conn, limit=3650):
     rows = conn.execute(
         "SELECT as_of_date, fundamental_score, valuation_score, signal, confidence "
         "FROM overall_scores ORDER BY as_of_date ASC LIMIT ?", (limit,)
@@ -65,7 +65,7 @@ def latest_component_scores(conn):
     return {r["component"]: dict(r) for r in rows}
 
 
-def component_score_history(conn, component, limit=180):
+def component_score_history(conn, component, limit=3650):
     rows = conn.execute(
         "SELECT as_of_date, score FROM component_scores WHERE component=? AND score IS NOT NULL "
         "ORDER BY as_of_date ASC LIMIT ?", (component, limit),
@@ -81,7 +81,7 @@ def latest_metric(conn, metric_key, company):
     return dict(row) if row else None
 
 
-def price_history(conn, company, limit=365):
+def price_history(conn, company, limit=3650):
     rows = conn.execute(
         "SELECT period_end as obs_date, value FROM metrics WHERE metric_key='price_usd' AND company=? "
         "ORDER BY period_end ASC LIMIT ?", (company, limit),

@@ -14,10 +14,25 @@ from scoring import rubric
 COMPONENTS = ["hbm_demand", "dram_pricing", "gross_margins", "customer_capex", "valuation"]
 
 
-def get_metric_series(conn, metric_key, company):
+def get_metric_series(conn, metric_key, company, as_of_date):
+    """Point-in-time correct: only returns metric values whose SOURCE
+    OBSERVATION was itself known (filed/published) by as_of_date, not just
+    values whose fiscal period ended by then. A quarter's gross margin isn't
+    knowable until the 10-Q reporting it is actually filed — using
+    period_end alone would let a historical backfill 'see the future'
+    (e.g. crediting a date in June with a quarter that wasn't filed until
+    the following month). Metrics with no source_observation_id (shouldn't
+    happen post-fix, see store.upsert_metric) are excluded rather than
+    assumed known, since we can't verify when they became known.
+    """
     rows = conn.execute(
-        "SELECT period_end, value FROM metrics WHERE metric_key=? AND company=? ORDER BY period_end ASC",
-        (metric_key, company),
+        """
+        SELECT m.period_end, m.value FROM metrics m
+        JOIN observations o ON o.id = m.source_observation_id
+        WHERE m.metric_key=? AND m.company=? AND o.obs_date <= ?
+        ORDER BY m.period_end ASC
+        """,
+        (metric_key, company, as_of_date),
     ).fetchall()
     return [(r["period_end"], r["value"]) for r in rows]
 
@@ -34,20 +49,21 @@ def _closest_to(series, target_date_str, tolerance_days=20):
     return best
 
 
-def _recent_observations(conn, category, lookback_days, require_text=True):
-    cutoff = (date.today() - timedelta(days=lookback_days)).isoformat()
-    q = "SELECT * FROM observations WHERE category=? AND obs_date>=?"
+def _recent_observations(conn, category, lookback_days, as_of_date, require_text=True):
+    as_of = date.fromisoformat(as_of_date)
+    cutoff = (as_of - timedelta(days=lookback_days)).isoformat()
+    q = "SELECT * FROM observations WHERE category=? AND obs_date>=? AND obs_date<=?"
     if require_text:
         q += " AND text_excerpt IS NOT NULL"
-    rows = conn.execute(q, (category, cutoff)).fetchall()
+    rows = conn.execute(q, (category, cutoff, as_of_date)).fetchall()
     return rows
 
 
-def _keyword_score(conn, cfg, category):
+def _keyword_score(conn, cfg, category, as_of_date):
     """Shared logic for hbm_demand / dram_pricing: keyword rubric over
     recent news + any management-guidance text observations."""
     lookback = cfg["lookback_days"][category]
-    obs = _recent_observations(conn, category, lookback, require_text=True)
+    obs = _recent_observations(conn, category, lookback, as_of_date, require_text=True)
     min_obs = cfg["min_observations"][category]
 
     if len(obs) < min_obs:
@@ -112,17 +128,17 @@ def _keyword_score(conn, cfg, category):
     }
 
 
-def score_hbm_demand(conn, cfg):
-    return _keyword_score(conn, cfg, "hbm_demand")
+def score_hbm_demand(conn, cfg, as_of_date):
+    return _keyword_score(conn, cfg, "hbm_demand", as_of_date)
 
 
-def score_dram_pricing(conn, cfg):
-    return _keyword_score(conn, cfg, "dram_pricing")
+def score_dram_pricing(conn, cfg, as_of_date):
+    return _keyword_score(conn, cfg, "dram_pricing", as_of_date)
 
 
-def score_gross_margins(conn, cfg):
+def score_gross_margins(conn, cfg, as_of_date):
     ticker = cfg["subject_ticker"]
-    series = get_metric_series(conn, "gross_margin_pct", ticker)
+    series = get_metric_series(conn, "gross_margin_pct", ticker, as_of_date)
     min_obs = cfg["min_observations"]["gross_margins"]
     if len(series) < min_obs:
         return {"score": None, "insufficient_data": True, "confidence": None,
@@ -145,7 +161,7 @@ def score_gross_margins(conn, cfg):
     score = rubric.clip(level_score + seq_adj + yoy_adj)
 
     # Cross-reference with DRAM pricing direction for the "why" narrative (section 3 ask)
-    dram = score_dram_pricing(conn, cfg)
+    dram = score_dram_pricing(conn, cfg, as_of_date)
     if dram["score"] is not None and seq_delta is not None:
         if seq_delta > 0 and dram["score"] > 55:
             margin_reason = "consistent with a strengthening DRAM pricing environment"
@@ -172,12 +188,12 @@ def score_gross_margins(conn, cfg):
     }
 
 
-def score_customer_capex(conn, cfg):
+def score_customer_capex(conn, cfg, as_of_date):
     companies = list(cfg["capex_universe"].keys())
     signals = []
     per_company = {}
     for ticker in companies:
-        series = get_metric_series(conn, "capex_usd", ticker)
+        series = get_metric_series(conn, "capex_usd", ticker, as_of_date)
         if len(series) < 2:
             continue
         latest_period, latest_val = series[-1]
@@ -202,7 +218,7 @@ def score_customer_capex(conn, cfg):
 
     # Small guidance-language nudge from recent capex-category news
     lookback = cfg["lookback_days"]["customer_capex"]
-    obs = _recent_observations(conn, "customer_capex", lookback, require_text=True)
+    obs = _recent_observations(conn, "customer_capex", lookback, as_of_date, require_text=True)
     strong_hits = sum(rubric.count_keyword_hits(o["text_excerpt"] or "", rubric.CAPEX_GUIDANCE_STRONG) for o in obs)
     weak_hits = sum(rubric.count_keyword_hits(o["text_excerpt"] or "", rubric.CAPEX_GUIDANCE_WEAK) for o in obs)
     nudge = rubric.clip((strong_hits - weak_hits) * 1.5, -10, 10)
@@ -221,11 +237,23 @@ def score_customer_capex(conn, cfg):
     }
 
 
-def score_valuation(conn, cfg):
+def score_valuation(conn, cfg, as_of_date):
     ticker = cfg["subject_ticker"]
 
+    if as_of_date != date.today().isoformat():
+        # We only ever capture a snapshot of forward P/E (today's), never a
+        # history of it -- yfinance gives no historical-estimates series.
+        # Approximating a historical valuation with a different methodology
+        # (e.g. trailing price percentile alone) would silently mix two
+        # incompatible approaches into one series, so this is left an honest
+        # gap for backfilled dates rather than approximated.
+        return {"score": None, "insufficient_data": True, "confidence": None,
+                "rationale": "Insufficient data: historical forward P/E is not available (only today's "
+                             "snapshot is ever captured), so valuation cannot be backfilled for past dates.",
+                "evidence_ids": []}
+
     def latest_metric(key):
-        series = get_metric_series(conn, key, ticker)
+        series = get_metric_series(conn, key, ticker, as_of_date)
         return series[-1][1] if series else None
 
     forward_pe = latest_metric("forward_pe")
@@ -288,7 +316,7 @@ def compute_and_store(as_of_date=None):
 
     results = {}
     for component, fn in SCORERS.items():
-        r = fn(conn, cfg)
+        r = fn(conn, cfg, as_of_date)
         prior = _prior_score(conn, component, as_of_date)
         trend = _trend(r["score"], prior, cfg)
         conn.execute(

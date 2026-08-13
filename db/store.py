@@ -91,6 +91,16 @@ def insert_observation(
 
 def upsert_metric(conn, metric_key, company, period_end, value, period_label=None,
                    derived_from=None, source_observation_id=None):
+    """Upsert a metric. Note the COALESCE on source_observation_id: when a
+    collector re-scans a period it already has (the common case — SEC data
+    doesn't change daily), insert_observation returns None for the
+    already-known duplicate, so source_observation_id would otherwise get
+    silently overwritten with NULL on every rerun after the first, which
+    would break point-in-time-correct historical lookups (get_metric_series
+    joins through this column to find when a data point actually became
+    known). COALESCE keeps the original linkage unless a genuinely new one
+    is available.
+    """
     value = _to_native(value)
     conn.execute(
         """
@@ -100,7 +110,7 @@ def upsert_metric(conn, metric_key, company, period_end, value, period_label=Non
         ON CONFLICT(metric_key, company, period_end)
         DO UPDATE SET value=excluded.value, period_label=excluded.period_label,
                        derived_from=excluded.derived_from,
-                       source_observation_id=excluded.source_observation_id
+                       source_observation_id=COALESCE(excluded.source_observation_id, metrics.source_observation_id)
         """,
         (metric_key, company, period_end, period_label, value, derived_from,
          source_observation_id),

@@ -90,6 +90,29 @@ def collect(conn, cfg):
             upsert_metric(conn, metric_key, ticker, today, round(value, 4),
                            source_observation_id=obs_id)
 
+        # Full historical daily closes, not just today's — we already fetched
+        # a year of history to compute the stats above, so store all of it.
+        # This is what lets the "price vs fundamentals" chart show more than
+        # one point per day the collector happened to run.
+        hist_count = 0
+        for ts, close_val in close.items():
+            day = ts.date().isoformat()
+            if day == today:
+                continue  # already inserted above with the full price_fields treatment
+            dedup_key = make_dedup_key("yfinance-price-hist", ticker, "price_usd", day)
+            obs_id = insert_observation(
+                conn, category="price",
+                source_name="Yahoo Finance (chart API via yfinance)",
+                source_type="FACT", confidence="MEDIUM", obs_date=day,
+                dedup_key=dedup_key, metric_key="price_usd", company=ticker,
+                value=round(float(close_val), 4), unit="USD",
+                source_url=f"https://finance.yahoo.com/quote/{ticker}",
+            )
+            upsert_metric(conn, "price_usd", ticker, day, round(float(close_val), 4),
+                           source_observation_id=obs_id)
+            hist_count += 1
+        print(f"[market_data] backfilled {hist_count} historical daily closes")
+
     # Valuation fields from .info (fragile — Yahoo's authenticated endpoint)
     try:
         info = t.info
