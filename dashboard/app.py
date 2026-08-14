@@ -277,8 +277,9 @@ with tcol2:
     if vb["insufficient_data"]:
         st.metric("Volume Balance", "Insufficient data")
     else:
-        label = {"NET_DISTRIBUTION": "🔴 Net distribution", "NET_ACCUMULATION": "🟢 Net accumulation",
-                  "BALANCED": "🟡 Balanced", "UNKNOWN": "—"}[vb["direction"]]
+        label = {"NET_DISTRIBUTION": "🔴 Bearish (net distribution)",
+                  "NET_ACCUMULATION": "🟢 Bullish (net accumulation)",
+                  "BALANCED": "🟡 Neutral (balanced)", "UNKNOWN": "—"}[vb["direction"]]
         st.metric(f"{vb['window_days']}-Day Volume Balance", label, f"{vb['balance_pct']:+.2f}%")
     if not vb["insufficient_data"]:
         st.caption(vb["rationale"])
@@ -306,11 +307,44 @@ else:
         px_fig = make_subplots(rows=2, cols=1, shared_xaxes=True, row_heights=[0.7, 0.3], vertical_spacing=0.03)
         dates = [s[0] for s in pv_series]
         closes = [s[1] for s in pv_series]
-        volumes = [s[2] for s in pv_series]
         px_fig.add_trace(go.Scatter(x=dates, y=closes, mode="lines", name="MU Price",
                                      line=dict(color=LINE_ORANGE, width=2)), row=1, col=1)
-        px_fig.add_trace(go.Bar(x=dates, y=volumes, name="Volume", marker_color=LINE_BLUE, opacity=0.5),
+
+        # Volume bars colored by that day's price direction -- this is what
+        # makes the volume-balance number ("net distribution") visible and
+        # checkable, rather than a disconnected stat: a chart with taller
+        # red (down-day) bars than green (up-day) bars IS net distribution.
+        up_x, up_y, down_x, down_y, flat_x, flat_y = [], [], [], [], [], []
+        for i, (d, close, vol) in enumerate(pv_series):
+            if i == 0:
+                flat_x.append(d); flat_y.append(vol)
+                continue
+            prev_close = pv_series[i - 1][1]
+            if close > prev_close:
+                up_x.append(d); up_y.append(vol)
+            elif close < prev_close:
+                down_x.append(d); down_y.append(vol)
+            else:
+                flat_x.append(d); flat_y.append(vol)
+        px_fig.add_trace(go.Bar(x=up_x, y=up_y, name="Volume (up day)", marker_color="#16a34a", opacity=0.6),
                           row=2, col=1)
+        px_fig.add_trace(go.Bar(x=down_x, y=down_y, name="Volume (down day)", marker_color="#dc2626", opacity=0.6),
+                          row=2, col=1)
+        if flat_x:
+            px_fig.add_trace(go.Bar(x=flat_x, y=flat_y, name="Volume (flat)", marker_color="#9ca3af", opacity=0.6),
+                              row=2, col=1)
+
+        # Volume moving average overlay -- makes "below/above average volume"
+        # (the volume-regime rating) directly readable off the chart instead
+        # of only stated as a separate number.
+        long_n = cfg["technicals"]["volume_avg_long_days"]
+        vol_values = [s[2] for s in pv_series]
+        vol_ma = [
+            (sum(vol_values[i + 1 - long_n:i + 1]) / long_n) if i + 1 >= long_n else None
+            for i in range(len(vol_values))
+        ]
+        px_fig.add_trace(go.Scatter(x=dates, y=vol_ma, mode="lines", name=f"{long_n}-day avg volume",
+                                     line=dict(color="#1f2937", width=1.5, dash="dot")), row=2, col=1)
 
         level_style = [
             ("macro_floor", "Macro floor", "#6b7280"),
@@ -327,10 +361,17 @@ else:
                                   annotation_position="right", annotation_xanchor="left",
                                   row=1, col=1)
 
-        px_fig.update_layout(height=550, margin=dict(t=20, b=10, l=10, r=190), showlegend=False)
+        px_fig.update_layout(
+            height=600, margin=dict(t=20, b=10, l=10, r=190), barmode="stack",
+            legend=dict(orientation="h", yanchor="bottom", y=1.0),
+        )
         px_fig.update_yaxes(title_text="Price (USD)", row=1, col=1)
         px_fig.update_yaxes(title_text="Volume", row=2, col=1)
         st.plotly_chart(px_fig, use_container_width=True)
+        st.caption("Volume bars colored by that day's direction (green = price up, red = price down) — this "
+                   "is the volume balance made visible: taller/more-frequent red bars than green is what "
+                   "'net distribution' above means. The dotted line is the same longer-window average used "
+                   "for the volume regime rating — bars sitting below it visually confirm 'below average.'")
 
 st.divider()
 
