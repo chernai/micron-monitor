@@ -118,99 +118,6 @@ c4.metric("As of", overall["as_of_date"])
 
 st.divider()
 
-# ---------- FEATURED CHART: price vs. fundamentals ----------
-# This is the single most important visual in the app — everything below
-# supports it. Fundamental score as bars (0-100, left axis) against MU's
-# actual price as a continuous line (USD, right axis), with the same
-# buying-opportunity / risk-reduce thresholds used for the signal itself
-# drawn as reference lines. Deliberately dual-axis: the signal thresholds
-# are only meaningful in absolute score units, and price only means
-# anything to a viewer in actual dollars, so indexing either series away
-# would remove the numbers that make this chart useful.
-st.subheader("📈 Price vs. Fundamentals")
-fscore_hist = data.overall_score_history(conn)
-price_hist = data.price_history(conn, ticker)
-
-if len(fscore_hist) < 2 or len(price_hist) < 2:
-    st.info("Needs at least two days of history for both price and fundamental score. "
-            "Builds up as daily refreshes accumulate (or run a historical backfill — "
-            "see scripts/backfill_history.py).")
-else:
-    score_dates = [h["as_of_date"] for h in fscore_hist if h["fundamental_score"] is not None]
-    score_values = [h["fundamental_score"] for h in fscore_hist if h["fundamental_score"] is not None]
-    price_dates = [p["obs_date"] for p in price_hist]
-    price_values = [p["value"] for p in price_hist]
-
-    fig = make_subplots(specs=[[{"secondary_y": True}]])
-    fig.add_trace(
-        go.Bar(x=score_dates, y=score_values, name="Fundamental Score",
-               marker_color=LINE_BLUE, opacity=0.55),
-        secondary_y=False,
-    )
-    fig.add_trace(
-        go.Scatter(x=price_dates, y=price_values, name="MU Price", mode="lines",
-                   line=dict(color=LINE_ORANGE, width=2)),
-        secondary_y=True,
-    )
-    buy_floor = cfg["signal_thresholds"]["buying_opportunity_min_fundamental"]
-    risk_ceiling = cfg["signal_thresholds"]["risk_reduce_max_fundamental"]
-    fig.add_hline(y=buy_floor, line_dash="dash", line_color="#16a34a",
-                  annotation_text=f"Buying-opportunity floor ({buy_floor})",
-                  annotation_position="top left", secondary_y=False)
-    fig.add_hline(y=risk_ceiling, line_dash="dash", line_color="#dc2626",
-                  annotation_text=f"Risk/reduce ceiling ({risk_ceiling})",
-                  annotation_position="bottom left", secondary_y=False)
-
-    fig.update_yaxes(title_text="Fundamental Score (0-100)", range=[0, 100], secondary_y=False)
-    fig.update_yaxes(title_text="MU Price (USD)", secondary_y=True)
-    fig.update_layout(
-        height=500, margin=dict(t=40, b=10, l=10, r=10),
-        legend=dict(orientation="h", yanchor="bottom", y=1.02),
-        barmode="overlay",
-    )
-    st.plotly_chart(fig, use_container_width=True)
-    st.caption("Bars = fundamental score (HBM demand + DRAM pricing + gross margins + customer capex, "
-               "left axis). Line = MU price (right axis). Dashed lines = the same thresholds that drive "
-               "the signal below — this is where you can see price pulling away from (or catching up to) "
-               "the fundamentals.")
-
-st.divider()
-
-# ---------- MAIN SIGNAL ----------
-emoji, label, color = SIGNAL_STYLE.get(overall["signal"], ("⚪", "UNKNOWN", "#6b7280"))
-st.markdown(
-    f"""
-    <div style="border:2px solid {color}; border-radius:12px; padding:20px 24px; margin-bottom:12px;">
-        <div style="font-size:28px; font-weight:700; color:{color};">{emoji} {label}</div>
-        <div style="margin-top:8px; font-size:15px; color: var(--text-color, #444);">
-            Fundamental Score: <b>{overall['fundamental_score']:.0f}/100</b> &nbsp;|&nbsp;
-            Valuation Score: <b>{overall['valuation_score']:.0f}/100</b> &nbsp;|&nbsp;
-            Confidence: <b>{overall['confidence']}</b>
-        </div>
-    </div>
-    """,
-    unsafe_allow_html=True,
-)
-
-# ---------- IS TODAY BETTER THAN N DAYS AGO? ----------
-score_hist_for_deltas = data.overall_score_history(conn)
-days_collected = len({h["as_of_date"] for h in score_hist_for_deltas})
-st.caption(f"Fundamental score vs recent history ({days_collected} day(s) of history collected so far):")
-delta_cols = st.columns(3)
-for col, (label, n_days) in zip(delta_cols, [("1 day ago", 1), ("7 days ago", 7), ("30 days ago", 30)]):
-    result = data.score_delta_vs(score_hist_for_deltas, n_days)
-    with col:
-        if result is None:
-            st.metric(label, "Insufficient history")
-        else:
-            st.metric(
-                label,
-                f"{result['latest_score']:.0f}/100",
-                f"{result['delta']:+.0f} vs {result['reference_score']:.0f} on {result['reference_date']}",
-            )
-
-st.divider()
-
 # ---------- PRICE ACTION (technicals — MU only, informational, not a signal) ----------
 st.subheader("📊 Price Action")
 st.caption("Short-term trading context for MU — deliberately separate from the fundamental score above. "
@@ -334,6 +241,100 @@ else:
                    "for the volume regime rating — bars sitting below it visually confirm 'below average.'")
 
 st.divider()
+
+# ---------- FEATURED CHART: price vs. fundamentals ----------
+# This is the single most important visual in the app — everything below
+# supports it. Fundamental score as bars (0-100, left axis) against MU's
+# actual price as a continuous line (USD, right axis), with the same
+# buying-opportunity / risk-reduce thresholds used for the signal itself
+# drawn as reference lines. Deliberately dual-axis: the signal thresholds
+# are only meaningful in absolute score units, and price only means
+# anything to a viewer in actual dollars, so indexing either series away
+# would remove the numbers that make this chart useful.
+st.subheader("📈 Price vs. Fundamentals")
+fscore_hist = data.overall_score_history(conn)
+price_hist = data.price_history(conn, ticker)
+
+if len(fscore_hist) < 2 or len(price_hist) < 2:
+    st.info("Needs at least two days of history for both price and fundamental score. "
+            "Builds up as daily refreshes accumulate (or run a historical backfill — "
+            "see scripts/backfill_history.py).")
+else:
+    score_dates = [h["as_of_date"] for h in fscore_hist if h["fundamental_score"] is not None]
+    score_values = [h["fundamental_score"] for h in fscore_hist if h["fundamental_score"] is not None]
+    price_dates = [p["obs_date"] for p in price_hist]
+    price_values = [p["value"] for p in price_hist]
+
+    fig = make_subplots(specs=[[{"secondary_y": True}]])
+    fig.add_trace(
+        go.Bar(x=score_dates, y=score_values, name="Fundamental Score",
+               marker_color=LINE_BLUE, opacity=0.55),
+        secondary_y=False,
+    )
+    fig.add_trace(
+        go.Scatter(x=price_dates, y=price_values, name="MU Price", mode="lines",
+                   line=dict(color=LINE_ORANGE, width=2)),
+        secondary_y=True,
+    )
+    buy_floor = cfg["signal_thresholds"]["buying_opportunity_min_fundamental"]
+    risk_ceiling = cfg["signal_thresholds"]["risk_reduce_max_fundamental"]
+    fig.add_hline(y=buy_floor, line_dash="dash", line_color="#16a34a",
+                  annotation_text=f"Buying-opportunity floor ({buy_floor})",
+                  annotation_position="top left", secondary_y=False)
+    fig.add_hline(y=risk_ceiling, line_dash="dash", line_color="#dc2626",
+                  annotation_text=f"Risk/reduce ceiling ({risk_ceiling})",
+                  annotation_position="bottom left", secondary_y=False)
+
+    fig.update_yaxes(title_text="Fundamental Score (0-100)", range=[0, 100], secondary_y=False)
+    fig.update_yaxes(title_text="MU Price (USD)", secondary_y=True)
+    fig.update_layout(
+        height=500, margin=dict(t=40, b=10, l=10, r=10),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02),
+        barmode="overlay",
+    )
+    st.plotly_chart(fig, use_container_width=True)
+    st.caption("Bars = fundamental score (HBM demand + DRAM pricing + gross margins + customer capex, "
+               "left axis). Line = MU price (right axis). Dashed lines = the same thresholds that drive "
+               "the signal below — this is where you can see price pulling away from (or catching up to) "
+               "the fundamentals.")
+
+st.divider()
+
+# ---------- MAIN SIGNAL ----------
+emoji, label, color = SIGNAL_STYLE.get(overall["signal"], ("⚪", "UNKNOWN", "#6b7280"))
+st.markdown(
+    f"""
+    <div style="border:2px solid {color}; border-radius:12px; padding:20px 24px; margin-bottom:12px;">
+        <div style="font-size:28px; font-weight:700; color:{color};">{emoji} {label}</div>
+        <div style="margin-top:8px; font-size:15px; color: var(--text-color, #444);">
+            Fundamental Score: <b>{overall['fundamental_score']:.0f}/100</b> &nbsp;|&nbsp;
+            Valuation Score: <b>{overall['valuation_score']:.0f}/100</b> &nbsp;|&nbsp;
+            Confidence: <b>{overall['confidence']}</b>
+        </div>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
+
+# ---------- IS TODAY BETTER THAN N DAYS AGO? ----------
+score_hist_for_deltas = data.overall_score_history(conn)
+days_collected = len({h["as_of_date"] for h in score_hist_for_deltas})
+st.caption(f"Fundamental score vs recent history ({days_collected} day(s) of history collected so far):")
+delta_cols = st.columns(3)
+for col, (label, n_days) in zip(delta_cols, [("1 day ago", 1), ("7 days ago", 7), ("30 days ago", 30)]):
+    result = data.score_delta_vs(score_hist_for_deltas, n_days)
+    with col:
+        if result is None:
+            st.metric(label, "Insufficient history")
+        else:
+            st.metric(
+                label,
+                f"{result['latest_score']:.0f}/100",
+                f"{result['delta']:+.0f} vs {result['reference_score']:.0f} on {result['reference_date']}",
+            )
+
+st.divider()
+
 
 # ---------- FOUR FUNDAMENTALS (+ valuation) ----------
 st.subheader("Components")
