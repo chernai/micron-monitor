@@ -211,46 +211,6 @@ for col, (label, n_days) in zip(delta_cols, [("1 day ago", 1), ("7 days ago", 7)
 
 st.divider()
 
-# ---------- FOUR FUNDAMENTALS (+ valuation) ----------
-st.subheader("Components")
-cols = st.columns(5)
-for i, comp_key in enumerate(["hbm_demand", "dram_pricing", "gross_margins", "customer_capex", "valuation"]):
-    c = components.get(comp_key)
-    with cols[i]:
-        if not c or c["insufficient_data"] or c["score"] is None:
-            st.metric(COMPONENT_LABELS[comp_key], "Insufficient data")
-        else:
-            st.metric(COMPONENT_LABELS[comp_key],
-                      f"{badge(c['score'])} {c['score']:.0f}/100",
-                      f"{TREND_ARROW.get(c['trend'], '•')} {c['confidence']}")
-
-st.divider()
-
-# ---------- PEER COMPARISON (context only, no signal) ----------
-st.subheader("🌏 Peer Comparison")
-st.caption("Context, not a signal — SK Hynix and Samsung have no usable SEC-filed financials (SK Hynix "
-           "files bare 6-Ks as a foreign private issuer with no structured XBRL; Samsung isn't SEC-registered "
-           "at all), so unlike MU these numbers come from Yahoo Finance's own fundamentals data rather than "
-           "a citable filing — real, but lower-confidence and shallower history.")
-
-peer_rows = []
-for pticker, pname in [(ticker, "Micron (MU)")] + [(t, i["name"]) for t, i in cfg.get("peers", {}).items()]:
-    gm_series = data.metric_series(conn, "gross_margin_pct", pticker, limit=2)
-    gm = gm_series[-1] if gm_series else None
-    gm_delta = (gm_series[-1]["value"] - gm_series[-2]["value"]) if len(gm_series) == 2 else None
-    fpe = data.latest_metric(conn, "forward_pe", pticker)
-    price_p = data.latest_metric(conn, "price_usd", pticker)
-    peer_rows.append({
-        "Company": pname,
-        "Price": f"${price_p['value']:.2f}" if price_p else "—",
-        "Gross Margin (latest qtr)": f"{gm['value']:.1f}%" if gm else "—",
-        "Qtr-over-Qtr": f"{gm_delta:+.1f}pp" if gm_delta is not None else "—",
-        "Forward P/E": f"{fpe['value']:.1f}x" if fpe else "—",
-    })
-st.dataframe(pd.DataFrame(peer_rows), use_container_width=True, hide_index=True)
-
-st.divider()
-
 # ---------- PRICE ACTION (technicals — MU only, informational, not a signal) ----------
 st.subheader("📊 Price Action")
 st.caption("Short-term trading context for MU — deliberately separate from the fundamental score above. "
@@ -372,6 +332,46 @@ else:
                    "is the volume balance made visible: taller/more-frequent red bars than green is what "
                    "'net distribution' above means. The dotted line is the same longer-window average used "
                    "for the volume regime rating — bars sitting below it visually confirm 'below average.'")
+
+st.divider()
+
+# ---------- FOUR FUNDAMENTALS (+ valuation) ----------
+st.subheader("Components")
+cols = st.columns(5)
+for i, comp_key in enumerate(["hbm_demand", "dram_pricing", "gross_margins", "customer_capex", "valuation"]):
+    c = components.get(comp_key)
+    with cols[i]:
+        if not c or c["insufficient_data"] or c["score"] is None:
+            st.metric(COMPONENT_LABELS[comp_key], "Insufficient data")
+        else:
+            st.metric(COMPONENT_LABELS[comp_key],
+                      f"{badge(c['score'])} {c['score']:.0f}/100",
+                      f"{TREND_ARROW.get(c['trend'], '•')} {c['confidence']}")
+
+st.divider()
+
+# ---------- PEER COMPARISON (context only, no signal) ----------
+st.subheader("🌏 Peer Comparison")
+st.caption("Context, not a signal — SK Hynix and Samsung have no usable SEC-filed financials (SK Hynix "
+           "files bare 6-Ks as a foreign private issuer with no structured XBRL; Samsung isn't SEC-registered "
+           "at all), so unlike MU these numbers come from Yahoo Finance's own fundamentals data rather than "
+           "a citable filing — real, but lower-confidence and shallower history.")
+
+peer_rows = []
+for pticker, pname in [(ticker, "Micron (MU)")] + [(t, i["name"]) for t, i in cfg.get("peers", {}).items()]:
+    gm_series = data.metric_series(conn, "gross_margin_pct", pticker, limit=2)
+    gm = gm_series[-1] if gm_series else None
+    gm_delta = (gm_series[-1]["value"] - gm_series[-2]["value"]) if len(gm_series) == 2 else None
+    fpe = data.latest_metric(conn, "forward_pe", pticker)
+    price_p = data.latest_metric(conn, "price_usd", pticker)
+    peer_rows.append({
+        "Company": pname,
+        "Price": f"${price_p['value']:.2f}" if price_p else "—",
+        "Gross Margin (latest qtr)": f"{gm['value']:.1f}%" if gm else "—",
+        "Qtr-over-Qtr": f"{gm_delta:+.1f}pp" if gm_delta is not None else "—",
+        "Forward P/E": f"{fpe['value']:.1f}x" if fpe else "—",
+    })
+st.dataframe(pd.DataFrame(peer_rows), use_container_width=True, hide_index=True)
 
 st.divider()
 
