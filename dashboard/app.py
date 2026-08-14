@@ -236,6 +236,16 @@ else:
                               line=dict(color="#1f2937", width=1, dash="dot"), yaxis="y3"))
     fig.add_trace(go.Scatter(x=dates, y=rsi, mode="lines", name="RSI (14)",
                               line=dict(color="#b45309", width=1.3), yaxis="y4"))
+    # The RSI axis has no visible tick labels (its range is artificially
+    # stretched to squeeze the line into a bottom band, so raw ticks would
+    # show meaningless numbers) -- tag the line's current value directly
+    # instead, since that's the only way to actually read it off the chart.
+    if rsi and rsi[-1] is not None:
+        fig.add_annotation(
+            x=dates[-1], y=rsi[-1], yref="y4", xref="x",
+            text=f" RSI {rsi[-1]:.0f} ", showarrow=False, xanchor="left",
+            font=dict(color="#b45309", size=12), bgcolor="rgba(255,255,255,0.85)",
+        )
 
     buy_floor = cfg["signal_thresholds"]["buying_opportunity_min_fundamental"]
     risk_ceiling = cfg["signal_thresholds"]["risk_reduce_max_fundamental"]
