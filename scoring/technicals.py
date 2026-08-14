@@ -171,6 +171,43 @@ def compute_support_resistance(cfg, series):
     }
 
 
+def moving_average_series(values, window):
+    """Simple moving average, None until there's a full window's worth of
+    data (no partial-window average pretending to be a real N-day MA)."""
+    return [
+        (sum(values[i + 1 - window:i + 1]) / window) if i + 1 >= window else None
+        for i in range(len(values))
+    ]
+
+
+def rsi_series(closes, period=14):
+    """Wilder's RSI (the textbook/standard smoothing, not a plain rolling
+    average of gains/losses) -- the momentum oscillator most platforms mean
+    by 'RSI'. None for the warm-up period before there's enough data."""
+    n = len(closes)
+    rsi = [None] * n
+    if n <= period:
+        return rsi
+
+    gains = [0.0] * n
+    losses = [0.0] * n
+    for i in range(1, n):
+        change = closes[i] - closes[i - 1]
+        gains[i] = max(change, 0.0)
+        losses[i] = max(-change, 0.0)
+
+    avg_gain = sum(gains[1:period + 1]) / period
+    avg_loss = sum(losses[1:period + 1]) / period
+    rsi[period] = 100.0 if avg_loss == 0 else 100 - (100 / (1 + avg_gain / avg_loss))
+
+    for i in range(period + 1, n):
+        avg_gain = (avg_gain * (period - 1) + gains[i]) / period
+        avg_loss = (avg_loss * (period - 1) + losses[i]) / period
+        rsi[i] = 100.0 if avg_loss == 0 else 100 - (100 / (1 + avg_gain / avg_loss))
+
+    return rsi
+
+
 def compute_all(cfg, conn, ticker=None):
     ticker = ticker or cfg["subject_ticker"]
     series = get_price_volume_series(conn, ticker)

@@ -118,10 +118,12 @@ c4.metric("As of", overall["as_of_date"])
 
 st.divider()
 
-# ---------- PRICE ACTION (technicals — MU only, informational, not a signal) ----------
-st.subheader("📊 Price Action")
-st.caption("Short-term trading context for MU — deliberately separate from the fundamental score above. "
-            "This describes current market positioning, not the investment thesis.")
+# ---------- PRICE ACTION & FUNDAMENTALS (combined chart) ----------
+st.subheader("📊 Price Action & Fundamentals")
+st.caption("Fundamental score, price, moving averages, support/resistance, volume, and RSI — superimposed "
+           "on one shared timeline since they all describe the same price series. The fundamental score "
+           "and its dashed thresholds are the investment thesis; everything else here (MAs, S/R, volume, "
+           "RSI) is short-term trading context that never feeds the score or the signal above.")
 
 tech = technicals.compute_all(cfg, conn, ticker)
 pv_series = technicals.get_price_volume_series(conn, ticker)
@@ -170,49 +172,80 @@ else:
                 st.metric(label, "—")
     st.caption(sr["rationale"])
 
-    if len(pv_series) >= 2:
-        px_fig = make_subplots(rows=2, cols=1, shared_xaxes=True, row_heights=[0.7, 0.3], vertical_spacing=0.03)
-        dates = [s[0] for s in pv_series]
-        closes = [s[1] for s in pv_series]
-        px_fig.add_trace(go.Scatter(x=dates, y=closes, mode="lines", name="MU Price",
-                                     line=dict(color=LINE_ORANGE, width=2)), row=1, col=1)
+fscore_hist = data.overall_score_history(conn)
 
-        # Volume bars colored by that day's price direction -- this is what
-        # makes the volume-balance number ("net distribution") visible and
-        # checkable, rather than a disconnected stat: a chart with taller
-        # red (down-day) bars than green (up-day) bars IS net distribution.
-        up_x, up_y, down_x, down_y, flat_x, flat_y = [], [], [], [], [], []
-        for i, (d, close, vol) in enumerate(pv_series):
-            if i == 0:
-                flat_x.append(d); flat_y.append(vol)
-                continue
-            prev_close = pv_series[i - 1][1]
-            if close > prev_close:
-                up_x.append(d); up_y.append(vol)
-            elif close < prev_close:
-                down_x.append(d); down_y.append(vol)
-            else:
-                flat_x.append(d); flat_y.append(vol)
-        px_fig.add_trace(go.Bar(x=up_x, y=up_y, name="Volume (up day)", marker_color="#16a34a", opacity=0.6),
-                          row=2, col=1)
-        px_fig.add_trace(go.Bar(x=down_x, y=down_y, name="Volume (down day)", marker_color="#dc2626", opacity=0.6),
-                          row=2, col=1)
-        if flat_x:
-            px_fig.add_trace(go.Bar(x=flat_x, y=flat_y, name="Volume (flat)", marker_color="#9ca3af", opacity=0.6),
-                              row=2, col=1)
+if len(pv_series) < 2 or len(fscore_hist) < 2:
+    st.info("Needs at least two days of history for price, volume, and fundamental score. Builds up as "
+            "daily refreshes accumulate (or run a historical backfill — see scripts/backfill_history.py).")
+else:
+    dates = [s[0] for s in pv_series]
+    closes = [s[1] for s in pv_series]
+    volumes = [s[2] for s in pv_series]
+    score_dates = [h["as_of_date"] for h in fscore_hist if h["fundamental_score"] is not None]
+    score_values = [h["fundamental_score"] for h in fscore_hist if h["fundamental_score"] is not None]
 
-        # Volume moving average overlay -- makes "below/above average volume"
-        # (the volume-regime rating) directly readable off the chart instead
-        # of only stated as a separate number.
-        long_n = cfg["technicals"]["volume_avg_long_days"]
-        vol_values = [s[2] for s in pv_series]
-        vol_ma = [
-            (sum(vol_values[i + 1 - long_n:i + 1]) / long_n) if i + 1 >= long_n else None
-            for i in range(len(vol_values))
-        ]
-        px_fig.add_trace(go.Scatter(x=dates, y=vol_ma, mode="lines", name=f"{long_n}-day avg volume",
-                                     line=dict(color="#1f2937", width=1.5, dash="dot")), row=2, col=1)
+    ma50 = technicals.moving_average_series(closes, 50)
+    ma200 = technicals.moving_average_series(closes, 200)
+    rsi = technicals.rsi_series(closes, 14)
+    long_n = cfg["technicals"]["volume_avg_long_days"]
+    vol_ma = technicals.moving_average_series(volumes, long_n)
 
+    up_x, up_y, down_x, down_y, flat_x, flat_y = [], [], [], [], [], []
+    for i, (d, close, vol) in enumerate(pv_series):
+        if i == 0:
+            flat_x.append(d); flat_y.append(vol)
+            continue
+        prev_close = pv_series[i - 1][1]
+        if close > prev_close:
+            up_x.append(d); up_y.append(vol)
+        elif close < prev_close:
+            down_x.append(d); down_y.append(vol)
+        else:
+            flat_x.append(d); flat_y.append(vol)
+
+    # ONE chart, one plot area -- everything below is layered into it via
+    # overlaying y-axes rather than separate subplot rows. Volume and RSI
+    # get their own axes squeezed (via an inflated range) into thin bands
+    # at the bottom of the SAME plot rather than full-height, so they read
+    # as sub-indicator strips on one chart rather than boxed-off panels.
+    vol_max = max(volumes) if volumes else 1
+    volume_band, rsi_band = 0.15, (0.15, 0.35)  # fraction of plot height each occupies
+    volume_axis_range = [0, vol_max / volume_band]
+    # solve so RSI's real [0,100] maps to the [rsi_band[0], rsi_band[1]] fraction
+    rsi_span = 100 / (rsi_band[1] - rsi_band[0])
+    rsi_axis_min = -rsi_band[0] * rsi_span
+    rsi_axis_range = [rsi_axis_min, rsi_axis_min + rsi_span]
+
+    fig = go.Figure()
+    fig.add_trace(go.Bar(x=score_dates, y=score_values, name="Fundamental Score",
+                          marker_color=LINE_BLUE, opacity=0.35, yaxis="y"))
+    fig.add_trace(go.Scatter(x=dates, y=closes, mode="lines", name="MU Price",
+                              line=dict(color=LINE_ORANGE, width=2.2), yaxis="y2"))
+    fig.add_trace(go.Scatter(x=dates, y=ma50, mode="lines", name="50-day MA",
+                              line=dict(color="#7c3aed", width=1.2), yaxis="y2"))
+    fig.add_trace(go.Scatter(x=dates, y=ma200, mode="lines", name="200-day MA",
+                              line=dict(color="#0891b2", width=1.2), yaxis="y2"))
+    fig.add_trace(go.Bar(x=up_x, y=up_y, name="Volume (up day)", marker_color="#16a34a",
+                          opacity=0.5, yaxis="y3"))
+    fig.add_trace(go.Bar(x=down_x, y=down_y, name="Volume (down day)", marker_color="#dc2626",
+                          opacity=0.5, yaxis="y3"))
+    if flat_x:
+        fig.add_trace(go.Bar(x=flat_x, y=flat_y, name="Volume (flat)", marker_color="#9ca3af",
+                              opacity=0.5, yaxis="y3"))
+    fig.add_trace(go.Scatter(x=dates, y=vol_ma, mode="lines", name=f"{long_n}-day avg volume",
+                              line=dict(color="#1f2937", width=1, dash="dot"), yaxis="y3"))
+    fig.add_trace(go.Scatter(x=dates, y=rsi, mode="lines", name="RSI (14)",
+                              line=dict(color="#b45309", width=1.3), yaxis="y4"))
+
+    buy_floor = cfg["signal_thresholds"]["buying_opportunity_min_fundamental"]
+    risk_ceiling = cfg["signal_thresholds"]["risk_reduce_max_fundamental"]
+    fig.add_hline(y=buy_floor, line_dash="dash", line_color="#16a34a",
+                  annotation_text=f"Buying-opportunity floor ({buy_floor})", annotation_position="top left",
+                  yref="y")
+    fig.add_hline(y=risk_ceiling, line_dash="dash", line_color="#dc2626",
+                  annotation_text=f"Risk/reduce ceiling ({risk_ceiling})", annotation_position="bottom left",
+                  yref="y")
+    if not sr["insufficient_data"]:
         level_style = [
             ("macro_floor", "Macro floor", "#6b7280"),
             ("structural_support", "Structural support", "#16a34a"),
@@ -223,80 +256,37 @@ else:
         for key, label, color in level_style:
             point = sr[key]
             if point:
-                px_fig.add_hline(y=point["price"], line_dash="dot", line_color=color,
-                                  annotation_text=f"{label} (${point['price']:.0f})",
-                                  annotation_position="right", annotation_xanchor="left",
-                                  row=1, col=1)
+                fig.add_hline(y=point["price"], line_dash="dot", line_color=color,
+                              annotation_text=f"{label} (${point['price']:.0f})",
+                              annotation_position="right", annotation_xanchor="left", yref="y2")
+    rsi_70 = rsi_axis_min + 70 / 100 * rsi_span
+    rsi_30 = rsi_axis_min + 30 / 100 * rsi_span
+    fig.add_hline(y=rsi_70, line_dash="dot", line_color="#dc2626", line_width=1,
+                  annotation_text="RSI overbought (70)", annotation_position="right", yref="y4")
+    fig.add_hline(y=rsi_30, line_dash="dot", line_color="#16a34a", line_width=1,
+                  annotation_text="RSI oversold (30)", annotation_position="right", yref="y4")
 
-        px_fig.update_layout(
-            height=600, margin=dict(t=20, b=10, l=10, r=190), barmode="stack",
-            legend=dict(orientation="h", yanchor="bottom", y=1.0),
-        )
-        px_fig.update_yaxes(title_text="Price (USD)", row=1, col=1)
-        px_fig.update_yaxes(title_text="Volume", row=2, col=1)
-        st.plotly_chart(px_fig, use_container_width=True)
-        st.caption("Volume bars colored by that day's direction (green = price up, red = price down) — this "
-                   "is the volume balance made visible: taller/more-frequent red bars than green is what "
-                   "'net distribution' above means. The dotted line is the same longer-window average used "
-                   "for the volume regime rating — bars sitting below it visually confirm 'below average.'")
-
-st.divider()
-
-# ---------- FEATURED CHART: price vs. fundamentals ----------
-# This is the single most important visual in the app — everything below
-# supports it. Fundamental score as bars (0-100, left axis) against MU's
-# actual price as a continuous line (USD, right axis), with the same
-# buying-opportunity / risk-reduce thresholds used for the signal itself
-# drawn as reference lines. Deliberately dual-axis: the signal thresholds
-# are only meaningful in absolute score units, and price only means
-# anything to a viewer in actual dollars, so indexing either series away
-# would remove the numbers that make this chart useful.
-st.subheader("📈 Price vs. Fundamentals")
-fscore_hist = data.overall_score_history(conn)
-price_hist = data.price_history(conn, ticker)
-
-if len(fscore_hist) < 2 or len(price_hist) < 2:
-    st.info("Needs at least two days of history for both price and fundamental score. "
-            "Builds up as daily refreshes accumulate (or run a historical backfill — "
-            "see scripts/backfill_history.py).")
-else:
-    score_dates = [h["as_of_date"] for h in fscore_hist if h["fundamental_score"] is not None]
-    score_values = [h["fundamental_score"] for h in fscore_hist if h["fundamental_score"] is not None]
-    price_dates = [p["obs_date"] for p in price_hist]
-    price_values = [p["value"] for p in price_hist]
-
-    fig = make_subplots(specs=[[{"secondary_y": True}]])
-    fig.add_trace(
-        go.Bar(x=score_dates, y=score_values, name="Fundamental Score",
-               marker_color=LINE_BLUE, opacity=0.55),
-        secondary_y=False,
-    )
-    fig.add_trace(
-        go.Scatter(x=price_dates, y=price_values, name="MU Price", mode="lines",
-                   line=dict(color=LINE_ORANGE, width=2)),
-        secondary_y=True,
-    )
-    buy_floor = cfg["signal_thresholds"]["buying_opportunity_min_fundamental"]
-    risk_ceiling = cfg["signal_thresholds"]["risk_reduce_max_fundamental"]
-    fig.add_hline(y=buy_floor, line_dash="dash", line_color="#16a34a",
-                  annotation_text=f"Buying-opportunity floor ({buy_floor})",
-                  annotation_position="top left", secondary_y=False)
-    fig.add_hline(y=risk_ceiling, line_dash="dash", line_color="#dc2626",
-                  annotation_text=f"Risk/reduce ceiling ({risk_ceiling})",
-                  annotation_position="bottom left", secondary_y=False)
-
-    fig.update_yaxes(title_text="Fundamental Score (0-100)", range=[0, 100], secondary_y=False)
-    fig.update_yaxes(title_text="MU Price (USD)", secondary_y=True)
     fig.update_layout(
-        height=500, margin=dict(t=40, b=10, l=10, r=10),
-        legend=dict(orientation="h", yanchor="bottom", y=1.02),
-        barmode="overlay",
+        height=750, margin=dict(t=20, b=10, l=10, r=190), barmode="stack",
+        legend=dict(orientation="h", yanchor="bottom", y=1.0),
+        xaxis=dict(domain=[0, 1]),
+        yaxis=dict(title="Fundamental Score (0-100)", range=[0, 100], side="left"),
+        yaxis2=dict(title="Price (USD)", overlaying="y", side="right", anchor="x"),
+        yaxis3=dict(overlaying="y", side="right", position=0.97, range=volume_axis_range,
+                     showgrid=False, showticklabels=False, anchor="free"),
+        yaxis4=dict(overlaying="y", side="left", position=0.03, range=rsi_axis_range,
+                     showgrid=False, showticklabels=False, anchor="free"),
     )
     st.plotly_chart(fig, use_container_width=True)
-    st.caption("Bars = fundamental score (HBM demand + DRAM pricing + gross margins + customer capex, "
-               "left axis). Line = MU price (right axis). Dashed lines = the same thresholds that drive "
-               "the signal below — this is where you can see price pulling away from (or catching up to) "
-               "the fundamentals.")
+    st.caption(
+        "One chart, everything layered on it: fundamental score (bars, left axis) vs MU price (line, "
+        "right axis) with 50/200-day moving averages and support/resistance levels on the price scale, "
+        "the same buying-opportunity/risk-reduce thresholds that drive the signal below, volume "
+        "(colored by day direction, with its own average) squeezed into the bottom strip, and RSI(14) "
+        "in the band just above it — above its dotted 'overbought' line or below 'oversold' is the "
+        "conventional read. Moving averages, S/R, volume, and RSI are trading context only — none of "
+        "them feed the fundamental score or the signal."
+    )
 
 st.divider()
 
