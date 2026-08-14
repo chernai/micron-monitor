@@ -46,23 +46,12 @@ COMPONENT_LABELS = {
     "customer_capex": "Customer Capex",
     "valuation": "Valuation",
 }
-TREND_ARROW = {"up": "↑", "down": "↓", "stable": "→", None: "•"}
 TIER_LABEL = {
     "FACT": "FACT", "MANAGEMENT_GUIDANCE": "GUIDANCE", "ANALYST_ESTIMATE": "ANALYST EST.",
     "INDUSTRY_ESTIMATE": "INDUSTRY EST.", "NEWS_REPORT": "NEWS", "INFERENCE": "INFERENCE",
 }
 LINE_BLUE = "#2563eb"
 LINE_ORANGE = "#ea580c"
-
-
-def badge(score):
-    if score is None:
-        return "⚪"
-    if score >= 65:
-        return "🟢"
-    if score >= 45:
-        return "🟡"
-    return "🔴"
 
 
 cfg = load_config()
@@ -360,21 +349,6 @@ for col, (label, n_days) in zip(delta_cols, [("1 day ago", 1), ("7 days ago", 7)
 st.divider()
 
 
-# ---------- FOUR FUNDAMENTALS (+ valuation) ----------
-st.subheader("Components")
-cols = st.columns(5)
-for i, comp_key in enumerate(["hbm_demand", "dram_pricing", "gross_margins", "customer_capex", "valuation"]):
-    c = components.get(comp_key)
-    with cols[i]:
-        if not c or c["insufficient_data"] or c["score"] is None:
-            st.metric(COMPONENT_LABELS[comp_key], "Insufficient data")
-        else:
-            st.metric(COMPONENT_LABELS[comp_key],
-                      f"{badge(c['score'])} {c['score']:.0f}/100",
-                      f"{TREND_ARROW.get(c['trend'], '•')} {c['confidence']}")
-
-st.divider()
-
 # ---------- PEER COMPARISON (context only, no signal) ----------
 st.subheader("🌏 Peer Comparison")
 st.caption("Context, not a signal — SK Hynix and Samsung have no usable SEC-filed financials (SK Hynix "
@@ -401,7 +375,7 @@ st.dataframe(pd.DataFrame(peer_rows), use_container_width=True, hide_index=True)
 st.divider()
 
 # ---------- WHY THE SIGNAL ----------
-st.subheader("Why this signal?")
+st.subheader("Components")
 if overall.get("explanation"):
     parts = overall["explanation"].split(" | ")
     st.markdown(f"**{parts[0]}**")
