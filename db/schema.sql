@@ -57,6 +57,7 @@ CREATE TABLE IF NOT EXISTS overall_scores (
     as_of_date          TEXT NOT NULL UNIQUE,
     fundamental_score   DOUBLE PRECISION,  -- weighted avg of hbm/dram/margins/capex (renormalized if any missing)
     valuation_score      DOUBLE PRECISION, -- price attractiveness score
+    technical_score      DOUBLE PRECISION, -- entry-timing score (RSI/volume/MACD) -- can downgrade BUYING_OPPORTUNITY, never upgrade
     overall_score       DOUBLE PRECISION,  -- for trend charting; blends fundamental+valuation per weights
     signal              TEXT,           -- BUYING_OPPORTUNITY | NEUTRAL_WAIT | RISK_REDUCE
     confidence          TEXT,           -- HIGH | MEDIUM | LOW

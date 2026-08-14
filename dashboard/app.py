@@ -1,7 +1,7 @@
 import sys
 import subprocess
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, date, timedelta
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
@@ -167,31 +167,67 @@ if len(pv_series) < 2 or len(fscore_hist) < 2:
     st.info("Needs at least two days of history for price, volume, and fundamental score. Builds up as "
             "daily refreshes accumulate (or run a historical backfill — see scripts/backfill_history.py).")
 else:
-    dates = [s[0] for s in pv_series]
-    closes = [s[1] for s in pv_series]
-    volumes = [s[2] for s in pv_series]
-    score_dates = [h["as_of_date"] for h in fscore_hist if h["fundamental_score"] is not None]
-    score_values = [h["fundamental_score"] for h in fscore_hist if h["fundamental_score"] is not None]
+    range_choice = st.radio(
+        "Chart range", ["1M", "3M", "6M", "1Y", "All", "Custom"], index=3, horizontal=True,
+        label_visibility="collapsed",
+    )
+    if range_choice == "Custom":
+        custom_days = st.number_input("Last N days", min_value=5, max_value=3650, value=90, step=5)
+        range_days = int(custom_days)
+    else:
+        range_days = {"1M": 30, "3M": 91, "6M": 182, "1Y": 365, "All": None}[range_choice]
+    chart_cutoff = (
+        (date.fromisoformat(pv_series[-1][0]) - timedelta(days=range_days)).isoformat()
+        if range_days is not None else "0000-01-01"
+    )
 
-    ma50 = technicals.moving_average_series(closes, 50)
-    ma200 = technicals.moving_average_series(closes, 200)
-    rsi = technicals.rsi_series(closes, 14)
-    macd_line, macd_signal, macd_hist = technicals.macd_series(closes)
+    def _trim(xs, ys):
+        pairs = [(x, y) for x, y in zip(xs, ys) if x >= chart_cutoff]
+        return ([p[0] for p in pairs], [p[1] for p in pairs]) if pairs else ([], [])
+
+    # Indicators (MAs, RSI, MACD) are computed on the FULL price series
+    # first, then trimmed for display -- a 200-day MA needs 200 days of
+    # data behind it even if you're only looking at the last month, so
+    # trimming before computing would silently break the longer indicators.
+    dates_full = [s[0] for s in pv_series]
+    closes_full = [s[1] for s in pv_series]
+    volumes_full = [s[2] for s in pv_series]
+    ma50_full = technicals.moving_average_series(closes_full, 50)
+    ma200_full = technicals.moving_average_series(closes_full, 200)
+    rsi_full = technicals.rsi_series(closes_full, 14)
+    macd_line_full, macd_signal_full, macd_hist_full = technicals.macd_series(closes_full)
     long_n = cfg["technicals"]["volume_avg_long_days"]
-    vol_ma = technicals.moving_average_series(volumes, long_n)
+    vol_ma_full = technicals.moving_average_series(volumes_full, long_n)
 
-    up_x, up_y, down_x, down_y, flat_x, flat_y = [], [], [], [], [], []
+    dates, closes = _trim(dates_full, closes_full)
+    _, volumes = _trim(dates_full, volumes_full)
+    _, ma50 = _trim(dates_full, ma50_full)
+    _, ma200 = _trim(dates_full, ma200_full)
+    _, rsi = _trim(dates_full, rsi_full)
+    _, macd_line = _trim(dates_full, macd_line_full)
+    _, macd_signal = _trim(dates_full, macd_signal_full)
+    _, macd_hist = _trim(dates_full, macd_hist_full)
+    _, vol_ma = _trim(dates_full, vol_ma_full)
+
+    score_dates_full = [h["as_of_date"] for h in fscore_hist if h["fundamental_score"] is not None]
+    score_values_full = [h["fundamental_score"] for h in fscore_hist if h["fundamental_score"] is not None]
+    score_dates, score_values = _trim(score_dates_full, score_values_full)
+
+    up_x_full, up_y_full, down_x_full, down_y_full, flat_x_full, flat_y_full = [], [], [], [], [], []
     for i, (d, close, vol) in enumerate(pv_series):
         if i == 0:
-            flat_x.append(d); flat_y.append(vol)
+            flat_x_full.append(d); flat_y_full.append(vol)
             continue
         prev_close = pv_series[i - 1][1]
         if close > prev_close:
-            up_x.append(d); up_y.append(vol)
+            up_x_full.append(d); up_y_full.append(vol)
         elif close < prev_close:
-            down_x.append(d); down_y.append(vol)
+            down_x_full.append(d); down_y_full.append(vol)
         else:
-            flat_x.append(d); flat_y.append(vol)
+            flat_x_full.append(d); flat_y_full.append(vol)
+    up_x, up_y = _trim(up_x_full, up_y_full)
+    down_x, down_y = _trim(down_x_full, down_y_full)
+    flat_x, flat_y = _trim(flat_x_full, flat_y_full)
 
     # ONE chart, one plot area -- everything below is layered into it via
     # overlaying y-axes rather than separate subplot rows. Volume and RSI
@@ -315,6 +351,7 @@ st.divider()
 
 # ---------- MAIN SIGNAL ----------
 emoji, label, color = SIGNAL_STYLE.get(overall["signal"], ("⚪", "UNKNOWN", "#6b7280"))
+tech_score_display = f"{overall['technical_score']:.0f}/100" if overall.get("technical_score") is not None else "Insufficient data"
 st.markdown(
     f"""
     <div style="border:2px solid {color}; border-radius:12px; padding:20px 24px; margin-bottom:12px;">
@@ -322,29 +359,36 @@ st.markdown(
         <div style="margin-top:8px; font-size:15px; color: var(--text-color, #444);">
             Fundamental Score: <b>{overall['fundamental_score']:.0f}/100</b> &nbsp;|&nbsp;
             Valuation Score: <b>{overall['valuation_score']:.0f}/100</b> &nbsp;|&nbsp;
+            Technical Timing Score: <b>{tech_score_display}</b> &nbsp;|&nbsp;
             Confidence: <b>{overall['confidence']}</b>
         </div>
     </div>
     """,
     unsafe_allow_html=True,
 )
+st.caption("Technical Timing Score (RSI + volume regime/balance + MACD momentum) can downgrade a "
+           "fundamentals+valuation BUYING_OPPORTUNITY to NEUTRAL_WAIT when entry timing looks poor — it "
+           "never creates a buy signal on its own or pushes toward RISK_REDUCE. Fundamentals still decide "
+           "whether the thesis is sound at all.")
 
 # ---------- IS TODAY BETTER THAN N DAYS AGO? ----------
 score_hist_for_deltas = data.overall_score_history(conn)
 days_collected = len({h["as_of_date"] for h in score_hist_for_deltas})
-st.caption(f"Fundamental score vs recent history ({days_collected} day(s) of history collected so far):")
-delta_cols = st.columns(3)
-for col, (label, n_days) in zip(delta_cols, [("1 day ago", 1), ("7 days ago", 7), ("30 days ago", 30)]):
-    result = data.score_delta_vs(score_hist_for_deltas, n_days)
-    with col:
-        if result is None:
-            st.metric(label, "Insufficient history")
-        else:
-            st.metric(
-                label,
-                f"{result['latest_score']:.0f}/100",
-                f"{result['delta']:+.0f} vs {result['reference_score']:.0f} on {result['reference_date']}",
-            )
+st.caption(f"Score vs recent history ({days_collected} day(s) of history collected so far):")
+for score_key, score_label in [("fundamental_score", "Fundamental Score"), ("technical_score", "Technical Timing Score")]:
+    st.markdown(f"**{score_label}**")
+    delta_cols = st.columns(3)
+    for col, (label, n_days) in zip(delta_cols, [("1 day ago", 1), ("7 days ago", 7), ("30 days ago", 30)]):
+        result = data.score_delta_vs(score_hist_for_deltas, n_days, score_key=score_key)
+        with col:
+            if result is None:
+                st.metric(label, "Insufficient history")
+            else:
+                st.metric(
+                    label,
+                    f"{result['latest_score']:.0f}/100",
+                    f"{result['delta']:+.0f} vs {result['reference_score']:.0f} on {result['reference_date']}",
+                )
 
 st.divider()
 

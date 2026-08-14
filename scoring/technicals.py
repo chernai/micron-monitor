@@ -248,6 +248,87 @@ def macd_series(closes, fast=12, slow=26, signal=9):
     return macd_line, signal_line, histogram
 
 
+def _rsi_band_score(rsi):
+    if rsi is None:
+        return 55, "unknown"
+    if rsi <= 30:
+        return 90, "oversold"
+    if rsi <= 45:
+        return 75, "below neutral"
+    if rsi <= 55:
+        return 60, "neutral"
+    if rsi <= 70:
+        return 45, "above neutral"
+    return 20, "overbought"
+
+
+def compute_technical_timing_score(cfg, conn, ticker, as_of_date):
+    """A real, but deliberately asymmetric, 3rd input to the signal (see
+    scoring/engine.py): measures whether NOW looks like a technically good
+    MOMENT to act, not whether the investment thesis is sound. Point-in-time
+    correct -- computed from the price/volume series truncated to as_of_date,
+    the same way the fundamental backfill works, so this can be recomputed
+    for any historical date, not just today.
+    """
+    tcfg = cfg["technicals"]
+    full_series = get_price_volume_series(conn, ticker)
+    series = [s for s in full_series if s[0] <= as_of_date]
+    min_days = tcfg["technical_score_min_days"]
+    if len(series) < min_days:
+        return {"score": None, "insufficient_data": True,
+                "rationale": f"Insufficient data: need >= {min_days} days of price history as of "
+                             f"{as_of_date} to compute RSI/MACD reliably, have {len(series)}."}
+
+    closes = [s[1] for s in series]
+    rsi = rsi_series(closes, 14)
+    _, _, macd_hist = macd_series(closes)
+    vr = compute_volume_regime(cfg, series)
+    vb = compute_volume_balance(cfg, series)
+
+    latest_rsi = rsi[-1]
+    rsi_score, rsi_label = _rsi_band_score(latest_rsi)
+
+    vr_score_map = {"ABOVE_AVERAGE": 70, "IN_LINE": 55, "BELOW_AVERAGE": 40, "UNKNOWN": 50}
+    vr_score = 50 if vr["insufficient_data"] else vr_score_map.get(vr["regime"], 50)
+
+    vb_score_map = {"NET_ACCUMULATION": 75, "BALANCED": 55, "NET_DISTRIBUTION": 30, "UNKNOWN": 50}
+    vb_score = 50 if vb["insufficient_data"] else vb_score_map.get(vb["direction"], 50)
+
+    latest_hist = macd_hist[-1] if macd_hist else None
+    prev_hist = macd_hist[-2] if len(macd_hist) >= 2 else None
+    if latest_hist is None:
+        macd_score = 55
+    elif prev_hist is None:
+        macd_score = 60 if latest_hist >= 0 else 45
+    else:
+        rising = latest_hist > prev_hist
+        if latest_hist >= 0:
+            macd_score = 70 if rising else 55
+        else:
+            macd_score = 55 if rising else 30
+
+    weights = tcfg["technical_score_weights"]
+    score = round(
+        rsi_score * weights["rsi"] + vr_score * weights["volume_regime"]
+        + vb_score * weights["volume_balance"] + macd_score * weights["macd_momentum"], 1
+    )
+
+    rationale = (
+        f"RSI {latest_rsi:.0f} ({rsi_label}) -> {rsi_score}, volume regime "
+        f"{vr.get('regime', 'unknown').lower().replace('_', ' ')} -> {vr_score}, volume balance "
+        f"{vb.get('direction', 'unknown').lower().replace('_', ' ')} -> {vb_score}, MACD momentum -> "
+        f"{macd_score}. Weighted: {score}/100. This measures entry timing, not the thesis -- it can only "
+        f"downgrade a fundamentals+valuation BUYING_OPPORTUNITY to NEUTRAL_WAIT when timing looks poor, "
+        f"never create a buy signal out of weak fundamentals."
+    )
+    return {
+        "score": score, "insufficient_data": False, "rationale": rationale,
+        "detail": {"rsi": latest_rsi, "rsi_score": rsi_score, "volume_regime": vr.get("regime"),
+                   "volume_regime_score": vr_score, "volume_balance": vb.get("direction"),
+                   "volume_balance_score": vb_score, "macd_score": macd_score},
+    }
+
+
 def compute_all(cfg, conn, ticker=None):
     ticker = ticker or cfg["subject_ticker"]
     series = get_price_volume_series(conn, ticker)

@@ -14,14 +14,14 @@ def latest_overall_score(conn):
 
 def overall_score_history(conn, limit=3650):
     rows = conn.execute(
-        "SELECT as_of_date, fundamental_score, valuation_score, signal, confidence "
+        "SELECT as_of_date, fundamental_score, valuation_score, technical_score, signal, confidence "
         "FROM overall_scores ORDER BY as_of_date ASC LIMIT ?", (limit,)
     ).fetchall()
     return [dict(r) for r in rows]
 
 
-def score_delta_vs(history, days_ago, tolerance_days=2):
-    """Compare the latest fundamental_score in `history` (as returned by
+def score_delta_vs(history, days_ago, score_key="fundamental_score", tolerance_days=2):
+    """Compare the latest value of `score_key` in `history` (as returned by
     overall_score_history, ascending by date) against the reading closest to
     `days_ago` days before it. Returns None if there's no reading within
     `tolerance_days` of that target — i.e. not enough history yet, rather
@@ -30,14 +30,14 @@ def score_delta_vs(history, days_ago, tolerance_days=2):
     if len(history) < 2:
         return None
     latest = history[-1]
-    if latest["fundamental_score"] is None:
+    if latest[score_key] is None:
         return None
     latest_date = date.fromisoformat(latest["as_of_date"])
     target_date = latest_date - timedelta(days=days_ago)
 
     best, best_diff = None, None
     for h in history[:-1]:
-        if h["fundamental_score"] is None:
+        if h[score_key] is None:
             continue
         d = date.fromisoformat(h["as_of_date"])
         diff = abs((d - target_date).days)
@@ -46,10 +46,10 @@ def score_delta_vs(history, days_ago, tolerance_days=2):
     if best is None:
         return None
     return {
-        "delta": latest["fundamental_score"] - best["fundamental_score"],
+        "delta": latest[score_key] - best[score_key],
         "reference_date": best["as_of_date"],
-        "reference_score": best["fundamental_score"],
-        "latest_score": latest["fundamental_score"],
+        "reference_score": best[score_key],
+        "latest_score": latest[score_key],
     }
 
 

@@ -83,6 +83,7 @@ signal_thresholds:
   buying_opportunity_min_fundamental: 65
   buying_opportunity_min_price_score: 45
   risk_reduce_max_fundamental: 45
+  technical_downgrade_max: 35   # Technical Timing Score below this downgrades BUYING_OPPORTUNITY -> NEUTRAL_WAIT
 
 # Peer comparison (context only -- these do NOT get their own BUYING/RISK
 # signal; SEC EDGAR has no usable structured financials for either, so the
@@ -94,9 +95,7 @@ peers:
   SKHY:  {name: "SK Hynix (ADR)"}
   SSNLF: {name: "Samsung Electronics (OTC)"}
 
-# Price-action / technicals (Micron only). Deliberately kept out of the
-# fundamental score -- this is short-term trading context, not a fundamental
-# signal, consistent with "not a price predictor."
+# Price-action / technicals (Micron only).
 technicals:
   volume_avg_short_days: 10
   volume_avg_long_days: 50
@@ -106,3 +105,17 @@ technicals:
   swing_point_k: 5                # a day is a swing point if it's the extreme within +/- k trading days
   near_term_window_days: 30
   major_window_days: 180
+
+  # Technical Timing Score: a real 3rd input to the signal (alongside
+  # Fundamental Score and Valuation Score), but deliberately asymmetric --
+  # see signal_thresholds.technical_downgrade_max below. It measures entry
+  # TIMING (is now technically a good moment), not the investment thesis,
+  # so it can only downgrade a fundamentals+valuation BUYING_OPPORTUNITY to
+  # NEUTRAL_WAIT when timing looks poor -- it can never manufacture a buy
+  # signal out of weak fundamentals, and can never push toward RISK_REDUCE.
+  technical_score_min_days: 60   # need >= this many days of price history to compute RSI(14)/MACD(12,26,9) reliably
+  technical_score_weights:
+    rsi: 0.40
+    volume_regime: 0.20
+    volume_balance: 0.20
+    macd_momentum: 0.20

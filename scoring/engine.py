@@ -10,6 +10,7 @@ from datetime import date, datetime, timedelta
 from config.loader import load_config
 from db.init_db import get_conn
 from scoring import rubric
+from scoring import technicals
 
 COMPONENTS = ["hbm_demand", "dram_pricing", "gross_margins", "customer_capex", "valuation"]
 
@@ -344,7 +345,11 @@ def compute_and_store(as_of_date=None):
 
     valuation_score = results["valuation"]["score"]
 
+    tech_result = technicals.compute_technical_timing_score(cfg, conn, cfg["subject_ticker"], as_of_date)
+    technical_score = tech_result["score"]
+
     thresholds = cfg["signal_thresholds"]
+    technical_downgrade_note = None
     if fundamental_score is None:
         signal = "NEUTRAL_WAIT"
         overall_confidence = "LOW"
@@ -355,6 +360,18 @@ def compute_and_store(as_of_date=None):
         elif fundamental_score >= thresholds["buying_opportunity_min_fundamental"] and \
                 (valuation_score is None or valuation_score >= thresholds["buying_opportunity_min_price_score"]):
             signal = "BUYING_OPPORTUNITY"
+            # Technical Timing Score is a real 3rd input here, but
+            # deliberately asymmetric: it can only downgrade a
+            # fundamentals+valuation-driven buy signal when entry timing
+            # looks poor, never manufacture a buy out of weak fundamentals,
+            # and never push an already-NEUTRAL/RISK signal further down.
+            if technical_score is not None and technical_score < thresholds["technical_downgrade_max"]:
+                signal = "NEUTRAL_WAIT"
+                technical_downgrade_note = (
+                    f"Downgraded from BUYING_OPPORTUNITY: Technical Timing Score {technical_score:.0f}/100 is "
+                    f"below the {thresholds['technical_downgrade_max']} threshold -- fundamentals and "
+                    f"valuation still say buy, but entry timing looks poor right now."
+                )
         else:
             signal = "NEUTRAL_WAIT"
 
@@ -367,24 +384,27 @@ def compute_and_store(as_of_date=None):
             overall_confidence = "MEDIUM"
 
         explanation = _build_explanation(results, fundamental_score, valuation_score, signal, missing)
+        if technical_downgrade_note:
+            explanation = technical_downgrade_note + " | " + explanation
 
     overall_score = fundamental_score  # kept distinct from valuation per spec; used for the trend chart
 
     conn.execute(
-        "INSERT INTO overall_scores (as_of_date, fundamental_score, valuation_score, overall_score, signal, "
-        "confidence, missing_components, explanation) VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
+        "INSERT INTO overall_scores (as_of_date, fundamental_score, valuation_score, technical_score, "
+        "overall_score, signal, confidence, missing_components, explanation) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
         "ON CONFLICT(as_of_date) DO UPDATE SET fundamental_score=excluded.fundamental_score, "
-        "valuation_score=excluded.valuation_score, overall_score=excluded.overall_score, signal=excluded.signal, "
+        "valuation_score=excluded.valuation_score, technical_score=excluded.technical_score, "
+        "overall_score=excluded.overall_score, signal=excluded.signal, "
         "confidence=excluded.confidence, missing_components=excluded.missing_components, explanation=excluded.explanation",
-        (as_of_date, fundamental_score, valuation_score, overall_score, signal, overall_confidence,
-         json.dumps(missing), explanation),
+        (as_of_date, fundamental_score, valuation_score, technical_score, overall_score, signal,
+         overall_confidence, json.dumps(missing), explanation),
     )
     conn.commit()
     conn.close()
     return {
         "as_of_date": as_of_date, "components": results, "fundamental_score": fundamental_score,
-        "valuation_score": valuation_score, "signal": signal, "confidence": overall_confidence,
-        "missing_components": missing, "explanation": explanation,
+        "valuation_score": valuation_score, "technical_score": technical_score, "signal": signal,
+        "confidence": overall_confidence, "missing_components": missing, "explanation": explanation,
     }
 
 
@@ -415,5 +435,6 @@ def _build_explanation(results, fundamental_score, valuation_score, signal, miss
 if __name__ == "__main__":
     result = compute_and_store()
     print(f"Signal: {result['signal']} | Fundamental: {result['fundamental_score']} | "
-          f"Valuation: {result['valuation_score']} | Confidence: {result['confidence']}")
+          f"Valuation: {result['valuation_score']} | Technical: {result['technical_score']} | "
+          f"Confidence: {result['confidence']}")
     print(result["explanation"])
