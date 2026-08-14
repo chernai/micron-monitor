@@ -385,9 +385,9 @@ for score_key, score_label in [("fundamental_score", "Fundamental Score"), ("tec
                 st.metric(label, "Insufficient history")
             else:
                 st.metric(
-                    label,
-                    f"{result['latest_score']:.0f}/100",
-                    f"{result['delta']:+.0f} vs {result['reference_score']:.0f} on {result['reference_date']}",
+                    f"{label} ({result['reference_date']})",
+                    f"{result['reference_score']:.0f}/100",
+                    f"{result['delta']:+.0f} to {result['latest_score']:.0f}/100 today",
                 )
 
 st.divider()
