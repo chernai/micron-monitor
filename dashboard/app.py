@@ -187,6 +187,7 @@ else:
     ma50 = technicals.moving_average_series(closes, 50)
     ma200 = technicals.moving_average_series(closes, 200)
     rsi = technicals.rsi_series(closes, 14)
+    macd_line, macd_signal, macd_hist = technicals.macd_series(closes)
     long_n = cfg["technicals"]["volume_avg_long_days"]
     vol_ma = technicals.moving_average_series(volumes, long_n)
 
@@ -234,18 +235,6 @@ else:
                               opacity=0.5, yaxis="y3"))
     fig.add_trace(go.Scatter(x=dates, y=vol_ma, mode="lines", name=f"{long_n}-day avg volume",
                               line=dict(color="#1f2937", width=1, dash="dot"), yaxis="y3"))
-    fig.add_trace(go.Scatter(x=dates, y=rsi, mode="lines", name="RSI (14)",
-                              line=dict(color="#b45309", width=1.3), yaxis="y4"))
-    # The RSI axis has no visible tick labels (its range is artificially
-    # stretched to squeeze the line into a bottom band, so raw ticks would
-    # show meaningless numbers) -- tag the line's current value directly
-    # instead, since that's the only way to actually read it off the chart.
-    if rsi and rsi[-1] is not None:
-        fig.add_annotation(
-            x=dates[-1], y=rsi[-1], yref="y4", xref="x",
-            text=f" RSI {rsi[-1]:.0f} ", showarrow=False, xanchor="left",
-            font=dict(color="#b45309", size=12), bgcolor="rgba(255,255,255,0.85)",
-        )
 
     buy_floor = cfg["signal_thresholds"]["buying_opportunity_min_fundamental"]
     risk_ceiling = cfg["signal_thresholds"]["risk_reduce_max_fundamental"]
@@ -269,34 +258,69 @@ else:
                 fig.add_hline(y=point["price"], line_dash="dot", line_color=color,
                               annotation_text=f"{label} (${point['price']:.0f})",
                               annotation_position="right", annotation_xanchor="left", yref="y2")
-    rsi_70 = rsi_axis_min + 70 / 100 * rsi_span
-    rsi_30 = rsi_axis_min + 30 / 100 * rsi_span
-    fig.add_hline(y=rsi_70, line_dash="dot", line_color="#dc2626", line_width=1,
-                  annotation_text="RSI overbought (70)", annotation_position="right", yref="y4")
-    fig.add_hline(y=rsi_30, line_dash="dot", line_color="#16a34a", line_width=1,
-                  annotation_text="RSI oversold (30)", annotation_position="right", yref="y4")
-
     fig.update_layout(
-        height=750, margin=dict(t=20, b=10, l=10, r=190), barmode="stack",
+        height=700, margin=dict(t=20, b=10, l=10, r=190), barmode="stack",
         legend=dict(orientation="h", yanchor="bottom", y=1.0),
         xaxis=dict(domain=[0, 1]),
         yaxis=dict(title="Fundamental Score (0-100)", range=[0, 100], side="left"),
         yaxis2=dict(title="Price (USD)", overlaying="y", side="right", anchor="x"),
         yaxis3=dict(overlaying="y", side="right", position=0.97, range=volume_axis_range,
                      showgrid=False, showticklabels=False, anchor="free"),
-        yaxis4=dict(overlaying="y", side="left", position=0.03, range=rsi_axis_range,
-                     showgrid=False, showticklabels=False, anchor="free"),
     )
     st.plotly_chart(fig, use_container_width=True)
     st.caption(
         "One chart, everything layered on it: fundamental score (bars, left axis) vs MU price (line, "
         "right axis) with 50/200-day moving averages and support/resistance levels on the price scale, "
-        "the same buying-opportunity/risk-reduce thresholds that drive the signal below, volume "
-        "(colored by day direction, with its own average) squeezed into the bottom strip, and RSI(14) "
-        "in the band just above it — above its dotted 'overbought' line or below 'oversold' is the "
-        "conventional read. Moving averages, S/R, volume, and RSI are trading context only — none of "
-        "them feed the fundamental score or the signal."
+        "the same buying-opportunity/risk-reduce thresholds that drive the signal below, and volume "
+        "(colored by day direction, with its own average) squeezed into the bottom strip. Moving "
+        "averages, S/R, and volume are trading context only — none of them feed the fundamental score "
+        "or the signal."
     )
+
+    # RSI gets its own chart, not squeezed into the one above -- on a real,
+    # undistorted 0-100 axis the 70/30 overbought/oversold lines actually
+    # sit where they should; forced into a compressed band on the combined
+    # chart, they didn't line up with anything meaningful.
+    rsi_fig = go.Figure()
+    rsi_fig.add_trace(go.Scatter(x=dates, y=rsi, mode="lines", name="RSI (14)",
+                                  line=dict(color="#b45309", width=1.6)))
+    rsi_fig.add_hline(y=70, line_dash="dot", line_color="#dc2626", annotation_text="Overbought (70)",
+                       annotation_position="right")
+    rsi_fig.add_hline(y=30, line_dash="dot", line_color="#16a34a", annotation_text="Oversold (30)",
+                       annotation_position="right")
+    if rsi and rsi[-1] is not None:
+        rsi_fig.add_annotation(x=dates[-1], y=rsi[-1], text=f" RSI {rsi[-1]:.0f} ", showarrow=False,
+                                xanchor="left", font=dict(color="#b45309", size=12),
+                                bgcolor="rgba(255,255,255,0.85)")
+    rsi_fig.update_yaxes(title_text="RSI (14)", range=[0, 100])
+    rsi_fig.update_layout(height=220, margin=dict(t=10, b=10, l=10, r=80), showlegend=False)
+    st.plotly_chart(rsi_fig, use_container_width=True)
+    st.caption("RSI(14) — a momentum gauge, not the investment thesis. Above 70 is conventionally "
+               "'overbought' (momentum stretched, often followed by a pullback or consolidation); "
+               "below 30 'oversold.' Doesn't feed the fundamental score or the signal.")
+
+    # MACD -- usually shown alongside RSI in investing apps, same reasoning
+    # for giving it its own chart rather than squeezing it into the main one.
+    macd_fig = go.Figure()
+    hist_colors = ["#16a34a" if (h or 0) >= 0 else "#dc2626" for h in macd_hist]
+    macd_fig.add_trace(go.Bar(x=dates, y=macd_hist, name="Histogram", marker_color=hist_colors, opacity=0.5))
+    macd_fig.add_trace(go.Scatter(x=dates, y=macd_line, mode="lines", name="MACD",
+                                   line=dict(color=LINE_BLUE, width=1.6)))
+    macd_fig.add_trace(go.Scatter(x=dates, y=macd_signal, mode="lines", name="Signal",
+                                   line=dict(color="#b45309", width=1.6)))
+    macd_fig.add_hline(y=0, line_color="#9ca3af", line_width=1)
+    if macd_line and macd_line[-1] is not None:
+        macd_fig.add_annotation(x=dates[-1], y=macd_line[-1], text=f" MACD {macd_line[-1]:+.1f} ",
+                                 showarrow=False, xanchor="left", font=dict(color=LINE_BLUE, size=12),
+                                 bgcolor="rgba(255,255,255,0.85)")
+    macd_fig.update_yaxes(title_text="MACD")
+    macd_fig.update_layout(height=220, margin=dict(t=10, b=10, l=10, r=80),
+                            legend=dict(orientation="h", yanchor="bottom", y=1.0))
+    st.plotly_chart(macd_fig, use_container_width=True)
+    st.caption("MACD(12,26,9) — trend-momentum indicator: the MACD line (blue) crossing above its "
+               "signal line (orange), or the histogram turning positive, is conventionally read as "
+               "strengthening upward momentum, and vice versa below the zero line. Doesn't feed the "
+               "fundamental score or the signal.")
 
 st.divider()
 

@@ -208,6 +208,46 @@ def rsi_series(closes, period=14):
     return rsi
 
 
+def ema_series(values, period):
+    """Exponential moving average, seeded with a simple average of the
+    first `period` values (the standard way to bootstrap an EMA). None
+    before that seed point."""
+    n = len(values)
+    ema = [None] * n
+    if n < period:
+        return ema
+    multiplier = 2 / (period + 1)
+    ema[period - 1] = sum(values[:period]) / period
+    for i in range(period, n):
+        ema[i] = (values[i] - ema[i - 1]) * multiplier + ema[i - 1]
+    return ema
+
+
+def macd_series(closes, fast=12, slow=26, signal=9):
+    """Standard MACD: EMA(fast) - EMA(slow), a signal line that's an EMA(9)
+    of that, and their difference as the histogram. Returns three lists,
+    all None-padded until enough data exists for that line."""
+    ema_fast = ema_series(closes, fast)
+    ema_slow = ema_series(closes, slow)
+    macd_line = [
+        (f - s) if (f is not None and s is not None) else None
+        for f, s in zip(ema_fast, ema_slow)
+    ]
+
+    valid_start = next((i for i, v in enumerate(macd_line) if v is not None), None)
+    signal_line = [None] * len(macd_line)
+    if valid_start is not None:
+        sig = ema_series(macd_line[valid_start:], signal)
+        for i, v in enumerate(sig):
+            signal_line[valid_start + i] = v
+
+    histogram = [
+        (m - s) if (m is not None and s is not None) else None
+        for m, s in zip(macd_line, signal_line)
+    ]
+    return macd_line, signal_line, histogram
+
+
 def compute_all(cfg, conn, ticker=None):
     ticker = ticker or cfg["subject_ticker"]
     series = get_price_volume_series(conn, ticker)
