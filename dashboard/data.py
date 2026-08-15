@@ -65,6 +65,13 @@ def latest_component_scores(conn):
     return {r["component"]: dict(r) for r in rows}
 
 
+def component_scores_on(conn, as_of_date):
+    rows = conn.execute(
+        "SELECT * FROM component_scores WHERE as_of_date=?", (as_of_date,)
+    ).fetchall()
+    return {r["component"]: dict(r) for r in rows}
+
+
 def component_score_history(conn, component, limit=3650):
     rows = conn.execute(
         "SELECT as_of_date, score FROM component_scores WHERE component=? AND score IS NOT NULL "

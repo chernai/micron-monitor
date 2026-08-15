@@ -412,6 +412,35 @@ st.caption("Technical Timing Score (RSI + volume regime/balance + MACD momentum)
            "whether the thesis is sound at all.")
 
 # ---------- IS TODAY BETTER THAN N DAYS AGO? ----------
+def _fundamental_explanation(cfg, conn, as_of_date):
+    comps = data.component_scores_on(conn, as_of_date)
+    weights = cfg["weights"]
+    parts, weighted_sum, total_w = [], 0.0, 0.0
+    for c in ["hbm_demand", "dram_pricing", "gross_margins", "customer_capex"]:
+        row = comps.get(c)
+        if not row or row["insufficient_data"] or row["score"] is None:
+            continue
+        w = weights[c]
+        total_w += w
+        weighted_sum += row["score"] * w
+        parts.append(f"{COMPONENT_LABELS[c]} {row['score']:.0f}/100 ({w}%)")
+    if not parts:
+        return "No component data available for this date."
+    computed = weighted_sum / total_w if total_w else None
+    text = " + ".join(parts)
+    if computed is not None:
+        text += f" -> weighted {computed:.0f}/100."
+    return text
+
+
+def _technical_explanation(cfg, conn, ticker, as_of_date):
+    res = technicals.compute_technical_timing_score(cfg, conn, ticker, as_of_date)
+    if res["insufficient_data"]:
+        return res["rationale"]
+    # drop the boilerplate closing sentence (identical on every tile, adds no new info here)
+    return res["rationale"].split(". This measures")[0] + "."
+
+
 score_hist_for_deltas = data.overall_score_history(conn)
 days_collected = len({h["as_of_date"] for h in score_hist_for_deltas})
 st.caption(f"Score vs recent history ({days_collected} day(s) of history collected so far):")
@@ -424,11 +453,12 @@ for score_key, score_label in [("fundamental_score", "Fundamental Score"), ("tec
             if result is None:
                 st.metric(label, "Insufficient history")
             else:
-                st.metric(
-                    f"{label} ({result['reference_date']})",
-                    f"{result['reference_score']:.0f}/100",
-                    f"{result['delta']:+.0f} to {result['latest_score']:.0f}/100 today",
-                )
+                st.metric(f"{label} ({result['reference_date']})", f"{result['reference_score']:.0f}/100")
+                if score_key == "fundamental_score":
+                    explanation = _fundamental_explanation(cfg, conn, result["reference_date"])
+                else:
+                    explanation = _technical_explanation(cfg, conn, ticker, result["reference_date"])
+                st.caption(explanation)
 
 st.divider()
 
