@@ -119,3 +119,19 @@ technicals:
     volume_regime: 0.20
     volume_balance: 0.20
     macd_momentum: 0.20
+
+  # Technical Analysis narrative (the "Technical Analysis" button) -- a
+  # deterministic, rule-based read of moving-average slopes, volume-spread
+  # (close position within a bar's own high/low range), and overhead supply
+  # from past high-volume down bars. No ML/black-box classification; every
+  # sentence traces back to one of these thresholds.
+  ma_short_days: 10
+  ma_slope_lookback_days: 5       # compare an MA to itself this many trading days ago to call its slope
+  ma_flat_slope_pct: 0.3          # slope smaller than this (% of MA value) reads as "flat", not up/down
+  ma_retake_lookback_days: 15     # how far back to look for a "just retook the Nd MA" crossover
+  big_volume_multiplier: 1.5      # a bar's volume >= this x its trailing avg counts as a "big" bar
+  big_volume_avg_days: 50         # trailing window for the "big bar" volume average
+  close_position_low_max: 0.35    # close in the bottom this fraction of the day's range -> "closed near the low"
+  close_position_high_min: 0.65   # close in the top this fraction of the day's range -> "closed near the high"
+  overhead_supply_lookback_days: 180
+  overhead_supply_max_zones: 2

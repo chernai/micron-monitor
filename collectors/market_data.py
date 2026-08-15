@@ -136,6 +136,30 @@ def collect(conn, cfg):
             vol_count += 1
         print(f"[market_data] backfilled {vol_count} historical daily volumes")
 
+        # Full historical daily open/high/low -- needed for the technical
+        # narrative (bar range, where price closed within that range,
+        # overhead supply from past high-volume down bars). Same treatment
+        # as close/volume: store the whole fetched year, not just today.
+        ohl_count = 0
+        for ts, o_val, h_val, l_val in zip(hist.index, hist["Open"], hist["High"], hist["Low"]):
+            day = ts.date().isoformat()
+            if any(v != v for v in (o_val, h_val, l_val)):  # NaN guard
+                continue
+            for metric_key, val in (("price_open_usd", o_val), ("price_high_usd", h_val), ("price_low_usd", l_val)):
+                dedup_key = make_dedup_key("yfinance-ohlc-hist", ticker, metric_key, day)
+                obs_id = insert_observation(
+                    conn, category="price",
+                    source_name="Yahoo Finance (chart API via yfinance)",
+                    source_type="FACT", confidence="MEDIUM", obs_date=day,
+                    dedup_key=dedup_key, metric_key=metric_key, company=ticker,
+                    value=round(float(val), 4), unit="USD",
+                    source_url=f"https://finance.yahoo.com/quote/{ticker}",
+                )
+                upsert_metric(conn, metric_key, ticker, day, round(float(val), 4),
+                               source_observation_id=obs_id)
+            ohl_count += 1
+        print(f"[market_data] backfilled {ohl_count} historical daily OHL (open/high/low)")
+
     # Valuation fields from .info (fragile — Yahoo's authenticated endpoint)
     try:
         info = t.info
