@@ -24,7 +24,7 @@ except Exception:
 import pandas as pd
 
 from config.loader import load_config
-from dashboard import data
+from dashboard import data, chat
 from scoring import technicals, technical_narrative
 from scripts.background_scheduler import start_background_scheduler
 
@@ -192,6 +192,7 @@ else:
     dates_full = [s[0] for s in pv_series]
     closes_full = [s[1] for s in pv_series]
     volumes_full = [s[2] for s in pv_series]
+    ma10_full = technicals.moving_average_series(closes_full, cfg["technicals"]["ma_short_days"])
     ma50_full = technicals.moving_average_series(closes_full, 50)
     ma200_full = technicals.moving_average_series(closes_full, 200)
     rsi_full = technicals.rsi_series(closes_full, 14)
@@ -201,6 +202,7 @@ else:
 
     dates, closes = _trim(dates_full, closes_full)
     _, volumes = _trim(dates_full, volumes_full)
+    _, ma10 = _trim(dates_full, ma10_full)
     _, ma50 = _trim(dates_full, ma50_full)
     _, ma200 = _trim(dates_full, ma200_full)
     _, rsi = _trim(dates_full, rsi_full)
@@ -247,6 +249,8 @@ else:
                           marker_color=LINE_BLUE, opacity=0.35, yaxis="y"))
     fig.add_trace(go.Scatter(x=dates, y=closes, mode="lines", name="MU Price",
                               line=dict(color=LINE_ORANGE, width=2.2), yaxis="y2"))
+    fig.add_trace(go.Scatter(x=dates, y=ma10, mode="lines", name=f"{cfg['technicals']['ma_short_days']}-day MA",
+                              line=dict(color="#db2777", width=1.1), yaxis="y2"))
     fig.add_trace(go.Scatter(x=dates, y=ma50, mode="lines", name="50-day MA",
                               line=dict(color="#7c3aed", width=1.2), yaxis="y2"))
     fig.add_trace(go.Scatter(x=dates, y=ma200, mode="lines", name="200-day MA",
@@ -295,7 +299,7 @@ else:
     st.plotly_chart(fig, use_container_width=True)
     st.caption(
         "One chart, everything layered on it: fundamental score (bars, left axis) vs MU price (line, "
-        "right axis) with 50/200-day moving averages and support/resistance levels on the price scale, "
+        "right axis) with 10/50/200-day moving averages and support/resistance levels on the price scale, "
         "the same buying-opportunity/risk-reduce thresholds that drive the signal below, and volume "
         "(colored by day direction, with its own average) squeezed into the bottom strip. Moving "
         "averages, S/R, and volume are trading context only — none of them feed the fundamental score "
@@ -308,22 +312,36 @@ else:
                "within their own high/low range, and overhead supply from past high-volume down bars. "
                "Deterministic, not ML: every line traces back to a threshold in config.yaml. Narrative "
                "only — never feeds any score or the signal.")
+    st.markdown(
+        """
+        <style>
+        .st-key-run_technical_analysis button {
+            background-color: #86efac; border-color: #4ade80; color: #14532d;
+        }
+        .st-key-run_technical_analysis button:hover {
+            background-color: #6ee7a0; border-color: #22c55e; color: #14532d;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
     if st.button("Run Technical Analysis", key="run_technical_analysis"):
         with st.spinner("Reading the chart..."):
             narrative = technical_narrative.build_technical_narrative(cfg, conn, ticker)
         st.session_state["technical_narrative"] = narrative
 
     narrative = st.session_state.get("technical_narrative")
+
+    # Streamlit's markdown renderer treats a pair of "$" as a LaTeX math
+    # delimiter -- escape dollar amounts so "$1121-$1199" reads as text
+    # instead of getting swallowed as an inline equation.
+    def _esc(s):
+        return s.replace("$", "\\$")
+
     if narrative:
         if not narrative["available"]:
             st.info(narrative["rationale"])
         else:
-            # Streamlit's markdown renderer treats a pair of "$" as a LaTeX
-            # math delimiter -- escape dollar amounts so "$1121-$1199" reads
-            # as text, not gets swallowed as an inline equation.
-            def _esc(s):
-                return s.replace("$", "\\$")
-
             price_str = f"${narrative['current_price']:.2f}"
             st.caption(f"As of {narrative['as_of_date']} — MU @ {_esc(price_str)}")
             outlook_style = {
@@ -341,6 +359,42 @@ else:
                     continue
                 st.markdown(f"**{heading}**")
                 st.write(_esc(text))
+
+            if narrative.get("option_ideas"):
+                st.markdown("**Ways to express this view**")
+                st.caption("Generic strategy shapes matching the outlook above, not personalized advice — "
+                           "no options-chain data (no strikes, premiums, greeks, or expirations).")
+                for idea in narrative["option_ideas"]:
+                    st.markdown(f"- {_esc(idea)}")
+
+    st.markdown("**Ask about this analysis**")
+    st.caption("Powered by Claude — can discuss anything on this page, but answers may be imperfect and "
+               "aren't personalized financial advice.")
+    if "chat_messages" not in st.session_state:
+        st.session_state["chat_messages"] = []
+    for msg in st.session_state["chat_messages"]:
+        with st.chat_message(msg["role"]):
+            st.write(msg["content"])
+    # A plain form instead of st.chat_input -- st.chat_input always pins
+    # itself to the bottom of the whole page no matter where it's called
+    # from, which put it below Peer Comparison/Components/Alerts instead of
+    # under this section as asked for.
+    with st.form("chat_form", clear_on_submit=True):
+        user_question = st.text_input(
+            "Ask a question", label_visibility="collapsed",
+            placeholder="Ask a question about the chart, the fundamentals, or the signal...",
+        )
+        asked = st.form_submit_button("Ask")
+    if asked and user_question:
+        st.session_state["chat_messages"].append({"role": "user", "content": user_question})
+        with st.spinner("Thinking..."):
+            reply = chat.ask(ticker, overall, narrative, st.session_state["chat_messages"])
+        st.session_state["chat_messages"].append({"role": "assistant", "content": reply})
+        # Rerun so the history loop above (not this inline block) renders
+        # the new exchange -- keeps every message in one consistent
+        # position (above the input) instead of only the newest one
+        # appearing below it until the next natural rerun.
+        st.rerun()
 
     # RSI gets its own chart, not squeezed into the one above -- on a real,
     # undistorted 0-100 axis the 70/30 overbought/oversold lines actually

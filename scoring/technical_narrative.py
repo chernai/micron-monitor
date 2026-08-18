@@ -223,6 +223,59 @@ def _forecast(ma10, ma50, ma200, overhead_zones, reversal, current_price):
     return {"outlook": outlook, "text": text}
 
 
+def _options_ideas(outlook, current_price, near_term_support, near_term_resistance):
+    """Generic options-strategy SHAPES that match the app's own rule-based
+    outlook -- not personalized advice, not priced (no options-chain data
+    here: no strikes, premiums, greeks, or expirations). Purely maps a
+    chart read to the standard structure a trader would reach for to
+    express that same read."""
+    support_px = near_term_support["price"] if near_term_support else None
+    resistance_px = near_term_resistance["price"] if near_term_resistance else None
+    ideas = []
+
+    if outlook == "CONTINUATION":
+        if resistance_px:
+            ideas.append(f"Bull call spread: buy near current price (~${current_price:.0f}), sell near "
+                          f"resistance (~${resistance_px:.0f}) -- caps cost while still benefiting if the "
+                          f"trend continues toward that level.")
+        else:
+            ideas.append(f"Long call or bull call spread near current price (~${current_price:.0f}) -- no "
+                          f"nearby resistance detected to use as a short strike reference.")
+        if support_px:
+            ideas.append(f"Cash-secured put near support (~${support_px:.0f}) -- collects premium, and adds "
+                          f"exposure cheaper if price pulls back to that level instead.")
+    elif outlook == "CONSOLIDATION":
+        if support_px and resistance_px:
+            ideas.append(f"Short strangle / iron condor between support (~${support_px:.0f}) and resistance "
+                          f"(~${resistance_px:.0f}) -- sells premium on the view that price chops between "
+                          f"the two rather than breaking out.")
+        if resistance_px:
+            ideas.append(f"Covered call (if long shares) or bear call spread near resistance "
+                          f"(~${resistance_px:.0f}) -- expresses the view that level caps the rally for now, "
+                          f"without needing a full reversal.")
+        elif support_px:
+            ideas.append(f"No near-term resistance detected above current price -- if the chop still feels "
+                          f"capped, a cash-secured put near support (~${support_px:.0f}) collects premium "
+                          f"while you wait for a clearer breakout or breakdown.")
+        else:
+            ideas.append("No nearby support or resistance detected to anchor a range trade -- a defined-risk "
+                          "strangle only makes sense here if you expect a big move either direction soon.")
+    elif outlook == "DOWNTREND":
+        ideas.append(f"Protective put or put spread with a strike near current price "
+                      f"(~${current_price:.0f}){f', targeting support around ~${support_px:.0f}' if support_px else ''} "
+                      f"-- defines downside risk while expressing the bearish view.")
+        if resistance_px:
+            ideas.append(f"Bear call spread near resistance (~${resistance_px:.0f}) -- expresses the view "
+                          f"that price stays below that level, without shorting shares outright.")
+    else:  # MIXED
+        ideas.append("Signals aren't aligned enough here for a clean directional structure -- a defined-risk "
+                      "strangle only makes sense if you expect a big move either direction soon; otherwise "
+                      "waiting for confirmation (a clean MA alignment, or a break of one of the levels above) "
+                      "is the lower-risk path.")
+
+    return ideas
+
+
 def build_technical_narrative(cfg, conn, ticker=None, as_of_date=None):
     ticker = ticker or cfg["subject_ticker"]
     full_series = get_ohlcv_series(conn, ticker)
@@ -317,6 +370,10 @@ def build_technical_narrative(cfg, conn, ticker=None, as_of_date=None):
 
     lines.append(("Outlook", forecast["text"]))
 
+    near_support = None if sr["insufficient_data"] else sr["near_term_support"]
+    near_resistance = None if sr["insufficient_data"] else sr["near_term_resistance"]
+    option_ideas = _options_ideas(forecast["outlook"], current_price, near_support, near_resistance)
+
     return {
         "available": True,
         "as_of_date": dates[-1],
@@ -327,5 +384,6 @@ def build_technical_narrative(cfg, conn, ticker=None, as_of_date=None):
         "trend_origin": origin,
         "reversal_bar": reversal,
         "forecast": forecast,
+        "option_ideas": option_ideas,
         "sections": lines,
     }
