@@ -24,7 +24,7 @@ except Exception:
 import pandas as pd
 
 from config.loader import load_config
-from dashboard import data, chat
+from dashboard import data
 from scoring import technicals, technical_narrative
 from scripts.background_scheduler import start_background_scheduler
 
@@ -361,40 +361,11 @@ else:
                 st.write(_esc(text))
 
             if narrative.get("option_ideas"):
-                st.markdown("**Ways to express this view**")
+                st.markdown("**How to take advantage of the situation**")
                 st.caption("Generic strategy shapes matching the outlook above, not personalized advice — "
                            "no options-chain data (no strikes, premiums, greeks, or expirations).")
                 for idea in narrative["option_ideas"]:
                     st.markdown(f"- {_esc(idea)}")
-
-    st.markdown("**Ask about this analysis**")
-    st.caption("Powered by Claude — can discuss anything on this page, but answers may be imperfect and "
-               "aren't personalized financial advice.")
-    if "chat_messages" not in st.session_state:
-        st.session_state["chat_messages"] = []
-    for msg in st.session_state["chat_messages"]:
-        with st.chat_message(msg["role"]):
-            st.write(msg["content"])
-    # A plain form instead of st.chat_input -- st.chat_input always pins
-    # itself to the bottom of the whole page no matter where it's called
-    # from, which put it below Peer Comparison/Components/Alerts instead of
-    # under this section as asked for.
-    with st.form("chat_form", clear_on_submit=True):
-        user_question = st.text_input(
-            "Ask a question", label_visibility="collapsed",
-            placeholder="Ask a question about the chart, the fundamentals, or the signal...",
-        )
-        asked = st.form_submit_button("Ask")
-    if asked and user_question:
-        st.session_state["chat_messages"].append({"role": "user", "content": user_question})
-        with st.spinner("Thinking..."):
-            reply = chat.ask(ticker, overall, narrative, st.session_state["chat_messages"])
-        st.session_state["chat_messages"].append({"role": "assistant", "content": reply})
-        # Rerun so the history loop above (not this inline block) renders
-        # the new exchange -- keeps every message in one consistent
-        # position (above the input) instead of only the newest one
-        # appearing below it until the next natural rerun.
-        st.rerun()
 
     # RSI gets its own chart, not squeezed into the one above -- on a real,
     # undistorted 0-100 axis the 70/30 overbought/oversold lines actually
