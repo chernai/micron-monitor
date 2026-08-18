@@ -44,6 +44,14 @@ def collect(conn, cfg):
         print("[market_data] WARNING: no price history returned, skipping price metrics")
     else:
         close = hist["Close"]
+        # yfinance's last row is the most recent CLOSED bar, not necessarily
+        # today -- the daily cron runs before market close, so most runs see
+        # yesterday's close as "latest." Tag price_fields with that bar's own
+        # date, not date.today(), or a pre-market run mislabels yesterday's
+        # price as today's (and, worse, permanently freezes "today" at a
+        # stale value once a later run's real "today" no longer matches any
+        # row it tries to update).
+        latest_bar_date = close.index[-1].date().isoformat()
         current_price = float(close.iloc[-1])
         prev_close = float(close.iloc[-2]) if len(close) > 1 else None
         daily_change_pct = ((current_price / prev_close - 1) * 100) if prev_close else None
@@ -78,16 +86,16 @@ def collect(conn, cfg):
         for metric_key, value in price_fields.items():
             if value is None:
                 continue
-            dedup_key = make_dedup_key("yfinance-price", ticker, metric_key, today)
+            dedup_key = make_dedup_key("yfinance-price", ticker, metric_key, latest_bar_date)
             obs_id = insert_observation(
                 conn, category="price",
                 source_name="Yahoo Finance (chart API via yfinance)",
-                source_type="FACT", confidence="MEDIUM", obs_date=today,
+                source_type="FACT", confidence="MEDIUM", obs_date=latest_bar_date,
                 dedup_key=dedup_key, metric_key=metric_key, company=ticker,
                 value=round(value, 4), unit="USD" if "usd" in metric_key else "pct",
                 source_url=f"https://finance.yahoo.com/quote/{ticker}",
             )
-            upsert_metric(conn, metric_key, ticker, today, round(value, 4),
+            upsert_metric(conn, metric_key, ticker, latest_bar_date, round(value, 4),
                            source_observation_id=obs_id)
 
         # Full historical daily closes, not just today's — we already fetched
@@ -97,7 +105,7 @@ def collect(conn, cfg):
         hist_count = 0
         for ts, close_val in close.items():
             day = ts.date().isoformat()
-            if day == today:
+            if day == latest_bar_date:
                 continue  # already inserted above with the full price_fields treatment
             dedup_key = make_dedup_key("yfinance-price-hist", ticker, "price_usd", day)
             obs_id = insert_observation(
