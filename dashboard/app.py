@@ -59,9 +59,6 @@ conn = data.get_conn()
 ticker = cfg["subject_ticker"]
 
 st.title("🧠 Micron Monitor")
-st.caption("Fundamentally-driven monitoring for MU — not a price predictor. "
-           "Answers one question: given HBM demand, DRAM pricing, Micron margins, and customer AI capex, "
-           "is today's price an attractive risk/reward entry?")
 
 with st.sidebar:
     st.header("Controls")
@@ -109,10 +106,6 @@ st.divider()
 
 # ---------- PRICE ACTION & FUNDAMENTALS (combined chart) ----------
 st.subheader("📊 Price Action & Fundamentals")
-st.caption("Fundamental score, price, moving averages, support/resistance, volume, and RSI — superimposed "
-           "on one shared timeline since they all describe the same price series. The fundamental score "
-           "and its dashed thresholds are the investment thesis; everything else here (MAs, S/R, volume, "
-           "RSI) is short-term trading context that never feeds the score or the signal above.")
 
 tech = technicals.compute_all(cfg, conn, ticker)
 pv_series = technicals.get_price_volume_series(conn, ticker)
@@ -159,7 +152,6 @@ else:
                 st.metric(label, f"${point['price']:.2f}", point["date"])
             else:
                 st.metric(label, "—")
-    st.caption(sr["rationale"])
 
 fscore_hist = data.overall_score_history(conn)
 
@@ -250,7 +242,7 @@ else:
     fig.add_trace(go.Scatter(x=dates, y=closes, mode="lines", name="MU Price",
                               line=dict(color=LINE_ORANGE, width=2.2), yaxis="y2"))
     fig.add_trace(go.Scatter(x=dates, y=ma10, mode="lines", name=f"{cfg['technicals']['ma_short_days']}-day MA",
-                              line=dict(color="#db2777", width=1.1), yaxis="y2"))
+                              line=dict(color="#000000", width=1.1), yaxis="y2"))
     fig.add_trace(go.Scatter(x=dates, y=ma50, mode="lines", name="50-day MA",
                               line=dict(color="#7c3aed", width=1.2), yaxis="y2"))
     fig.add_trace(go.Scatter(x=dates, y=ma200, mode="lines", name="200-day MA",
@@ -439,11 +431,6 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
-st.caption("Technical Timing Score (RSI + volume regime/balance + MACD momentum) can downgrade a "
-           "fundamentals+valuation BUYING_OPPORTUNITY to NEUTRAL_WAIT when entry timing looks poor — it "
-           "never creates a buy signal on its own or pushes toward RISK_REDUCE. Fundamentals still decide "
-           "whether the thesis is sound at all.")
-
 # ---------- IS TODAY BETTER THAN N DAYS AGO? ----------
 def _fundamental_explanation(cfg, conn, as_of_date):
     comps = data.component_scores_on(conn, as_of_date)
@@ -475,8 +462,6 @@ def _technical_explanation(cfg, conn, ticker, as_of_date):
 
 
 score_hist_for_deltas = data.overall_score_history(conn)
-days_collected = len({h["as_of_date"] for h in score_hist_for_deltas})
-st.caption(f"Score vs recent history ({days_collected} day(s) of history collected so far):")
 for score_key, score_label in [("fundamental_score", "Fundamental Score"), ("technical_score", "Technical Timing Score")]:
     st.markdown(f"**{score_label}**")
     delta_cols = st.columns(3)
