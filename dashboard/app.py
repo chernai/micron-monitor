@@ -391,14 +391,22 @@ st.divider()
 
 # ---------- MAIN SIGNAL ----------
 emoji, label, color = SIGNAL_STYLE.get(overall["signal"], ("⚪", "UNKNOWN", "#6b7280"))
-tech_score_display = f"{overall['technical_score']:.0f}/100" if overall.get("technical_score") is not None else "Insufficient data"
+
+
+def _score_display(v):
+    return f"{v:.0f}/100" if v is not None else "Insufficient data"
+
+
+fundamental_score_display = _score_display(overall.get("fundamental_score"))
+valuation_score_display = _score_display(overall.get("valuation_score"))
+tech_score_display = _score_display(overall.get("technical_score"))
 st.markdown(
     f"""
     <div style="border:2px solid {color}; border-radius:12px; padding:20px 24px; margin-bottom:12px;">
         <div style="font-size:28px; font-weight:700; color:{color};">{emoji} {label}</div>
         <div style="margin-top:8px; font-size:15px; color: var(--text-color, #444);">
-            Fundamental Score: <b>{overall['fundamental_score']:.0f}/100</b> &nbsp;|&nbsp;
-            Valuation Score: <b>{overall['valuation_score']:.0f}/100</b> &nbsp;|&nbsp;
+            Fundamental Score: <b>{fundamental_score_display}</b> &nbsp;|&nbsp;
+            Valuation Score: <b>{valuation_score_display}</b> &nbsp;|&nbsp;
             Technical Timing Score: <b>{tech_score_display}</b> &nbsp;|&nbsp;
             Confidence: <b>{overall['confidence']}</b>
         </div>

@@ -129,25 +129,47 @@ def compute_support_resistance(cfg, series):
                 "rationale": f"Insufficient data: need >= {2 * k + 1} days, have {len(series)}."}
 
     highs, lows = _find_swing_points(series, k)
+    # A level's role (support vs. resistance) is decided dynamically by
+    # where it sits relative to CURRENT price, not by whether it was
+    # originally a swing high or a swing low. Pooling both together and
+    # re-splitting on every call is what makes "polarity flip" fall out for
+    # free: a former resistance level that price has since closed above
+    # automatically reads as support next time this runs (and vice versa),
+    # instead of staying permanently pinned to its original role.
+    swings = highs + lows
     current_price = series[-1][1]
     current_date = date.fromisoformat(series[-1][0])
     near_cutoff = (current_date - timedelta(days=near_days)).isoformat()
     major_cutoff = (current_date - timedelta(days=major_days)).isoformat()
 
-    near_highs = [h for h in highs if h[0] >= near_cutoff]
-    major_highs = [h for h in highs if h[0] >= major_cutoff]
-    near_lows = [l for l in lows if l[0] >= near_cutoff]
-    major_lows = [l for l in lows if l[0] >= major_cutoff]
+    near_swings = [p for p in swings if p[0] >= near_cutoff]
+    major_swings = [p for p in swings if p[0] >= major_cutoff]
 
-    above_near_highs = [h for h in near_highs if h[1] > current_price]
-    near_term_resistance = min(above_near_highs, key=lambda h: h[1]) if above_near_highs else (
-        near_highs[-1] if near_highs else None)
-    major_resistance = max(major_highs, key=lambda h: h[1]) if major_highs else None
+    def _closest_above(points):
+        above = [p for p in points if p[1] > current_price]
+        return min(above, key=lambda p: p[1]) if above else None
 
-    below_near_lows = [l for l in near_lows if l[1] < current_price]
-    near_term_support = max(below_near_lows, key=lambda l: l[1]) if below_near_lows else (
-        near_lows[-1] if near_lows else None)
-    structural_support = min(major_lows, key=lambda l: l[1]) if major_lows else None
+    def _closest_below(points):
+        below = [p for p in points if p[1] < current_price]
+        return max(below, key=lambda p: p[1]) if below else None
+
+    def _farthest_above(points):
+        above = [p for p in points if p[1] > current_price]
+        return max(above, key=lambda p: p[1]) if above else None
+
+    def _farthest_below(points):
+        below = [p for p in points if p[1] < current_price]
+        return min(below, key=lambda p: p[1]) if below else None
+
+    # Near-term = the very next hurdle in each direction (closest).
+    # Major/structural = the most extreme level still on the correct side of
+    # price within the wider window (farthest) -- the "big" ceiling/floor.
+    # Either can legitimately come back None: e.g. once price clears every
+    # major-window high, there IS no major resistance left in that window.
+    near_term_resistance = _closest_above(near_swings)
+    near_term_support = _closest_below(near_swings)
+    major_resistance = _farthest_above(major_swings)
+    structural_support = _farthest_below(major_swings)
 
     macro_floor = min(series, key=lambda s: s[1])
 
@@ -163,10 +185,14 @@ def compute_support_resistance(cfg, series):
         "macro_floor": _fmt(macro_floor),
         "rationale": (
             f"Levels are swing highs/lows — a day whose close is the highest (or lowest) within "
-            f"+/-{k} trading days of itself, not hand-drawn trendlines. Near-term = within the last "
-            f"{near_days} days; major/structural = within the last {major_days} days. Macro floor = "
-            f"lowest close in the full available price history (~{len(series)} trading days) — not "
-            f"necessarily an all-time low, just the floor of our data window."
+            f"+/-{k} trading days of itself, not hand-drawn trendlines. Role is assigned dynamically by "
+            f"current price, not by whether the swing was originally a high or a low: a broken resistance "
+            f"becomes support, and a broken support becomes resistance. Near-term = the nearest such level "
+            f"within the last {near_days} days; major/structural = the most extreme (farthest) such level "
+            f"within the last {major_days} days -- either can be absent if price has cleared every level in "
+            f"that window. Macro floor = lowest close in the full available price history "
+            f"(~{len(series)} trading days) — not necessarily an all-time low, just the floor of our data "
+            f"window."
         ),
     }
 

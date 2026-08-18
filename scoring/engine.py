@@ -241,18 +241,13 @@ def score_customer_capex(conn, cfg, as_of_date):
 def score_valuation(conn, cfg, as_of_date):
     ticker = cfg["subject_ticker"]
 
-    if as_of_date != date.today().isoformat():
-        # We only ever capture a snapshot of forward P/E (today's), never a
-        # history of it -- yfinance gives no historical-estimates series.
-        # Approximating a historical valuation with a different methodology
-        # (e.g. trailing price percentile alone) would silently mix two
-        # incompatible approaches into one series, so this is left an honest
-        # gap for backfilled dates rather than approximated.
-        return {"score": None, "insufficient_data": True, "confidence": None,
-                "rationale": "Insufficient data: historical forward P/E is not available (only today's "
-                             "snapshot is ever captured), so valuation cannot be backfilled for past dates.",
-                "evidence_ids": []}
-
+    # No fabricated/approximated history: market_data.py only ever writes a
+    # forward_pe row for the day it actually fetched Yahoo's estimate, so
+    # get_metric_series' point-in-time join naturally returns None for any
+    # date before that collection started, without a separate date guard
+    # here (a literal as_of_date == date.today() guard would incorrectly
+    # also block *re*computing a recent date after the fact, e.g. a repair
+    # run a few days later, even though that date has its own real snapshot).
     def latest_metric(key):
         series = get_metric_series(conn, key, ticker, as_of_date)
         return series[-1][1] if series else None
@@ -262,7 +257,8 @@ def score_valuation(conn, cfg, as_of_date):
 
     if forward_pe is None:
         return {"score": None, "insufficient_data": True, "confidence": None,
-                "rationale": "Insufficient data: forward P/E not available (Yahoo Finance valuation fields missing).",
+                "rationale": "Insufficient data: forward P/E not available for this date (Yahoo Finance "
+                             "valuation snapshot collection hadn't started yet, or fetch failed that day).",
                 "evidence_ids": []}
 
     pe_score = rubric.forward_pe_band_score(forward_pe)
