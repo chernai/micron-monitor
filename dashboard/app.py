@@ -298,31 +298,18 @@ else:
         "or the signal."
     )
 
-    # ---------- TECHNICAL ANALYSIS (narrative, on demand) ----------
+    # ---------- TECHNICAL ANALYSIS (narrative, computed fresh every load) ----------
     st.subheader("🔍 Technical Analysis")
     st.caption("A rule-based read of the chart above — moving-average slopes, where recent bars closed "
                "within their own high/low range, and overhead supply from past high-volume down bars. "
                "Deterministic, not ML: every line traces back to a threshold in config.yaml. Narrative "
                "only — never feeds any score or the signal.")
-    st.markdown(
-        """
-        <style>
-        .st-key-run_technical_analysis button {
-            background-color: #86efac; border-color: #4ade80; color: #14532d;
-        }
-        .st-key-run_technical_analysis button:hover {
-            background-color: #6ee7a0; border-color: #22c55e; color: #14532d;
-        }
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
-    if st.button("Run Technical Analysis", key="run_technical_analysis"):
-        with st.spinner("Reading the chart..."):
-            narrative = technical_narrative.build_technical_narrative(cfg, conn, ticker)
-        st.session_state["technical_narrative"] = narrative
-
-    narrative = st.session_state.get("technical_narrative")
+    # Computed directly from the latest DB state on every page load/rerun --
+    # deliberately NOT cached in session_state, which previously meant a
+    # user could be looking at a narrative computed days earlier (from
+    # whenever they last clicked a "Run" button) without realizing it was
+    # stale.
+    narrative = technical_narrative.build_technical_narrative(cfg, conn, ticker)
 
     # Streamlit's markdown renderer treats a pair of "$" as a LaTeX math
     # delimiter -- escape dollar amounts so "$1121-$1199" reads as text
@@ -330,34 +317,33 @@ else:
     def _esc(s):
         return s.replace("$", "\\$")
 
-    if narrative:
-        if not narrative["available"]:
-            st.info(narrative["rationale"])
-        else:
-            price_str = f"${narrative['current_price']:.2f}"
-            st.caption(f"As of {narrative['as_of_date']} — MU @ {_esc(price_str)}")
-            outlook_style = {
-                "CONTINUATION": ("🟢", "#16a34a"), "CONSOLIDATION": ("🟡", "#ca8a04"),
-                "DOWNTREND": ("🔴", "#dc2626"), "MIXED": ("⚪", "#6b7280"),
-            }[narrative["forecast"]["outlook"]]
-            st.markdown(
-                f"<div style='border:1px solid {outlook_style[1]}; border-radius:6px; padding:10px 14px; "
-                f"margin-bottom:10px;'><b>{outlook_style[0]} {narrative['forecast']['outlook']}</b><br>"
-                f"{_esc(narrative['forecast']['text'])}</div>",
-                unsafe_allow_html=True,
-            )
-            for heading, text in narrative["sections"]:
-                if heading == "Outlook":
-                    continue
-                st.markdown(f"**{heading}**")
-                st.write(_esc(text))
+    if not narrative["available"]:
+        st.info(narrative["rationale"])
+    else:
+        price_str = f"${narrative['current_price']:.2f}"
+        st.caption(f"As of {narrative['as_of_date']} — MU @ {_esc(price_str)}")
+        outlook_style = {
+            "CONTINUATION": ("🟢", "#16a34a"), "CONSOLIDATION": ("🟡", "#ca8a04"),
+            "DOWNTREND": ("🔴", "#dc2626"), "MIXED": ("⚪", "#6b7280"),
+        }[narrative["forecast"]["outlook"]]
+        st.markdown(
+            f"<div style='border:1px solid {outlook_style[1]}; border-radius:6px; padding:10px 14px; "
+            f"margin-bottom:10px;'><b>{outlook_style[0]} {narrative['forecast']['outlook']}</b><br>"
+            f"{_esc(narrative['forecast']['text'])}</div>",
+            unsafe_allow_html=True,
+        )
+        for heading, text in narrative["sections"]:
+            if heading == "Outlook":
+                continue
+            st.markdown(f"**{heading}**")
+            st.write(_esc(text))
 
-            if narrative.get("option_ideas"):
-                st.markdown("**How to take advantage of the situation**")
-                st.caption("Generic strategy shapes matching the outlook above, not personalized advice — "
-                           "no options-chain data (no strikes, premiums, greeks, or expirations).")
-                for idea in narrative["option_ideas"]:
-                    st.markdown(f"- {_esc(idea)}")
+        if narrative.get("option_ideas"):
+            st.markdown("**How to take advantage of the situation**")
+            st.caption("Generic strategy shapes matching the outlook above, not personalized advice — "
+                       "no options-chain data (no strikes, premiums, greeks, or expirations).")
+            for idea in narrative["option_ideas"]:
+                st.markdown(f"- {_esc(idea)}")
 
     # RSI gets its own chart, not squeezed into the one above -- on a real,
     # undistorted 0-100 axis the 70/30 overbought/oversold lines actually
